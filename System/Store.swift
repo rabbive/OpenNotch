@@ -27,8 +27,9 @@ public struct AppliedWallpaper: Codable, Equatable, Sendable {
 }
 
 /// Every replaced wallpaper, saved as JSON after each change so a revert still works after a relaunch,
-/// plus the renders themselves. The render folder holds only files a record points to, so its size
-/// is bounded by the Spaces OpenNotch changed, and a returning Space finds its render still there.
+/// plus the renders themselves. After each sweep the render folder holds only files a record points
+/// to or a Space shows, so its size is bounded by the Spaces OpenNotch changed, and a returning Space
+/// finds its render still there.
 @MainActor
 public final class Store {
     public let directory: URL
@@ -53,7 +54,7 @@ public final class Store {
             let list = try JSONDecoder().decode([AppliedWallpaper].self, from: Data(contentsOf: fileURL))
             applied = Dictionary(list.map { ($0.key, $0) }, uniquingKeysWith: { $1 })
         }
-        removeUnreferencedRenders()
+        sweep()
     }
 
     public func isRender(_ url: URL) -> Bool {
@@ -81,12 +82,12 @@ public final class Store {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(Array(updated.values)).write(to: fileURL, options: .atomic)
         applied = updated
-        removeUnreferencedRenders()
     }
 
-    /// Sweeps the whole folder, so renders left by a crash or a failed set, half-written files,
-    /// and renders from an older renderer version go too, unless a Space still shows one.
-    private func removeUnreferencedRenders() {
+    /// Deletes every render no record names and no Space shows: renders replaced by newer ones,
+    /// left by a crash or a failed set, half-written, or from an older renderer version. Run it once
+    /// the wallpapers are set, since a render about to be replaced still counts as shown until then.
+    public func sweep() {
         let referenced = Set(applied.values.map(\.renderedURL.lastPathComponent) + shownWallpapers().filter { isRender($0) }.map(\.lastPathComponent))
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: rendersDirectory.path) else { return }
         for name in names where !referenced.contains(name) {

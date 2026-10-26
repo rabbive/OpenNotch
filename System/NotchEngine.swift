@@ -85,6 +85,7 @@ public final class NotchEngine {
             if !on { spacesToVisit += labelsOfSpacesToVisit(display: display, spaces: spaces) }
         }
         if !settings.enabled { spacesToVisit += labelsOfDisconnectedDisplays(connected: displays) }
+        store.sweep()
         self.statuses = statuses
         self.spacesToVisit = spacesToVisit
     }
