@@ -57,14 +57,26 @@ enum Golden {
             try WallpaperRenderer.writePNG(image, to: directory.appending(path: "\(name).png"))
             return
         }
-        let url = try #require(
-            Bundle.module.url(forResource: name, withExtension: "png", subdirectory: "Goldens"),
-            "No golden named \(name). Record it with RECORD_GOLDENS=1 swift test."
-        )
+        guard let url = Bundle.module.url(forResource: name, withExtension: "png", subdirectory: "Goldens") else {
+            try printPNG(image, name)
+            Issue.record("No golden named \(name). Record it with RECORD_GOLDENS=1 swift test, or rebuild it from the \"golden \(name)\" lines above.")
+            return
+        }
         let expected = TestImages.Pixels(try WallpaperRenderer.load(url))
         let actual = TestImages.Pixels(image)
         try #require(actual.width == expected.width && actual.height == expected.height, "\(name) changed size")
         let worst = zip(actual.bytes, expected.bytes).map { abs(Int($0) - Int($1)) }.max() ?? 0
         #expect(worst <= tolerance, "\(name) differs from its golden by up to \(worst) per channel")
+    }
+
+    /// Prints the PNG as numbered lines of decimal bytes, which survive CI log redaction, so a golden
+    /// can be recorded on a CI runner by anyone without a Mac.
+    static func printPNG(_ image: CGImage, _ name: String) throws {
+        let file = FileManager.default.temporaryDirectory.appending(path: "\(name)-\(UUID().uuidString).png")
+        try WallpaperRenderer.writePNG(image, to: file)
+        let bytes = [UInt8](try Data(contentsOf: file))
+        for (line, start) in stride(from: 0, to: bytes.count, by: 64).enumerated() {
+            print("golden \(name) \(line): " + bytes[start..<min(start + 64, bytes.count)].map(String.init).joined(separator: " "))
+        }
     }
 }

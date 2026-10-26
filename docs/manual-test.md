@@ -2,7 +2,7 @@
 
 This checklist tests a CI build of pull request #1 on a MacBook with a notch. The core steps take about 15 minutes. Steps marked optional need more time or extra hardware. Do them only if the core steps pass and you have time left.
 
-The steps run from safest to riskiest. Steps 1 to 5 change no wallpaper. Every expected result comes from the code at commit 8e083d9, "Keep the original wallpaper safe and fix the review findings". A result that the code cannot settle is marked **Not confirmed by the code**. Note what you see for those steps.
+The steps run from safest to riskiest. Steps 1 to 5 change no wallpaper. Every expected result comes from the code at the commit "Add a band color for light and dark mode". A result that the code cannot settle is marked **Not confirmed by the code**. Note what you see for those steps.
 
 Tick a box only when you see exactly what it says. If a result differs, write down what you saw and go on, unless the step says to stop.
 
@@ -62,7 +62,7 @@ open /Applications/OpenNotch.app
 
 - [ ] No Gatekeeper dialog appears, because the install script cleared the quarantine flag. If macOS still blocks the app, open **System Settings > Privacy & Security**, click **Open Anyway**, and note the dialog's text.
 - [ ] No Dock icon and no window appear. A menu bar icon appears: a rectangle with its top third filled. If you can't find it, the notch may hide it. Quit some menu bar apps to make room.
-- [ ] Click the icon. The menu shows, in this order: **Black Menu Bar** (unchecked), `Off`, a separator, **MacBook Screen Only** (checked), **Rounded Corners** (a submenu with Off checked, then Small, Medium, High), **Launch at Login** (unchecked), **Hide Menu Bar Icon**, a separator, and **Quit OpenNotch** (⌘Q).
+- [ ] Click the icon. The menu shows, in this order: **Black Menu Bar** (unchecked), `Off`, a separator, **MacBook Screen Only** (checked), **Rounded Corners** (a submenu with Off checked, then Small, Medium, High), **Bar Color in Light Mode** (a submenu with Black checked, then Graphite, Silver, White), **Bar Color in Dark Mode** (the same submenu, Black checked), **Launch at Login** (unchecked), **Hide Menu Bar Icon**, a separator, and **Quit OpenNotch** (⌘Q).
 - [ ] The wallpaper has not changed.
 
 ### 4. Hide the menu bar icon and bring it back (1 minute)
@@ -115,7 +115,7 @@ If the verdict names your original photo or a system path instead, stop and send
 - [ ] After each choice, the status line returns to `On` within about a second.
 - [ ] For Small, Medium, and High, the two top corners of the wallpaper, just below the band, become rounded with black outside the curve. The radius is 6, 10, and 16 points. The bottom corners never change.
 - [ ] For Off, the band's bottom edge is straight from side to side again.
-- [ ] After each choice, `ls "$support/Renders"` still lists one file. OpenNotch deletes the old render once it records the new one.
+- [ ] After each choice, `ls "$support/Renders"` still lists one file. OpenNotch deletes the old render once the new one is set.
 
 ### 8. Switch Spaces and come back (1.5 minutes)
 
@@ -286,6 +286,22 @@ This step changes your wallpaper settings. The backup from step 1 records them.
 3. Uncheck **Black Menu Bar**, and visit Desktop 2.
 
 - [ ] Both Spaces get their original wallpaper back.
+
+### O6. Band colors in light and dark mode (2 minutes)
+
+1. With OpenNotch on, choose **Bar Color in Light Mode > White** and **Bar Color in Dark Mode > Black**.
+2. In **System Settings > Appearance**, choose **Light**.
+
+- [ ] Within about a second, the status line shows `Painting wallpaper…`, then `On`, and the band turns white across the full width.
+
+3. Choose **Dark**.
+
+- [ ] Within about a second, the band turns black again.
+- [ ] After each switch, `ls "$support/Renders"` lists one file.
+
+4. Choose your usual appearance, and set both bar colors back to **Black**.
+
+**Not confirmed by the code:** OpenNotch re-renders when macOS posts its appearance-change notification and reads the appearance from the app. If the band keeps its old color after a switch, switch to Desktop 2 and back to force a sync, and note whether the color then follows. Also note the menu bar text color over the white band.
 
 ## If something goes wrong
 

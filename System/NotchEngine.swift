@@ -44,6 +44,7 @@ public final class NotchEngine {
         let enabled: Bool
         let builtinOnly: Bool
         let corners: CornerStyle
+        let band: BandColors
     }
 
     public init(system: DesktopSystem, store: Store) {
@@ -54,8 +55,8 @@ public final class NotchEngine {
     /// With `builtinOnly`, external displays are treated as off, so any OpenNotch changed get restored.
     /// Passes never overlap, since a render runs off the main actor: a sync asked for during a pass
     /// waits for it, then the latest settings get one more pass. Returns once every request is applied.
-    public func sync(enabled: Bool, builtinOnly: Bool = true, corners: CornerStyle) async {
-        requested = Settings(enabled: enabled, builtinOnly: builtinOnly, corners: corners)
+    public func sync(enabled: Bool, builtinOnly: Bool = true, corners: CornerStyle, band: BandColors = .black) async {
+        requested = Settings(enabled: enabled, builtinOnly: builtinOnly, corners: corners, band: band)
         if running == nil {
             running = Task {
                 while let settings = requested {
@@ -77,7 +78,7 @@ public final class NotchEngine {
             let spaces = system.spaces(display: display.uuid)
             let status: NotchStatus
             do {
-                status = try await reconcile(display: display, spaces: spaces, enabled: on, corners: settings.corners)
+                status = try await reconcile(display: display, spaces: spaces, enabled: on, settings: settings)
             } catch {
                 status = .failed(String(describing: error))
             }
@@ -90,7 +91,7 @@ public final class NotchEngine {
         self.spacesToVisit = spacesToVisit
     }
 
-    private func reconcile(display: DisplaySnapshot, spaces: DisplaySpaces?, enabled: Bool, corners: CornerStyle) async throws -> NotchStatus {
+    private func reconcile(display: DisplaySnapshot, spaces: DisplaySpaces?, enabled: Bool, settings: Settings) async throws -> NotchStatus {
         if let spaces {
             let live = Set(spaces.all.map(\.uuid))
             try store.forget(store.applied.keys.filter { $0.display == display.uuid && $0.space.map { !live.contains($0) } ?? false })
@@ -141,7 +142,12 @@ public final class NotchEngine {
             placement: original.options.placement,
             background: original.options.background,
             geometry: display.geometry,
-            corners: corners
+            corners: settings.corners,
+            // A still or a time-of-day wallpaper shows every frame under the current appearance, and
+            // an appearance change re-syncs, so it gets one color. A light-and-dark one gets both.
+            band: isDynamic && DynamicHEIC.switchesWithAppearance(source)
+                ? settings.band
+                : BandColors(settings.band[system.appearance()])
         )
         let rendered = store.rendersDirectory.appending(path: "\(renderKey.digest).\(isDynamic ? "heic" : "png")")
         if !FileManager.default.fileExists(atPath: rendered.path) {
@@ -150,7 +156,7 @@ public final class NotchEngine {
             let now = system.wallpaper(display: display.uuid)
             let spacesNow = system.spaces(display: display.uuid)
             if spacesNow?.current.uuid != key.space || now.url != current.url || now.options != current.options {
-                return try await reconcile(display: display, spaces: spacesNow, enabled: enabled, corners: corners)
+                return try await reconcile(display: display, spaces: spacesNow, enabled: enabled, settings: settings)
             }
         }
         // Recorded first: a crash after the set would otherwise leave a render on screen that no
@@ -176,7 +182,8 @@ public final class NotchEngine {
                     geometry: key.geometry,
                     placement: key.placement,
                     background: key.background,
-                    corners: key.corners
+                    corners: key.corners,
+                    band: key.band
                 ) { continuation.yield($0) }
             } else {
                 let image = try WallpaperRenderer.render(
@@ -184,7 +191,8 @@ public final class NotchEngine {
                     geometry: key.geometry,
                     placement: key.placement,
                     background: key.background,
-                    corners: key.corners
+                    corners: key.corners,
+                    band: key.band.light
                 )
                 try WallpaperRenderer.writePNG(image, to: rendered)
             }

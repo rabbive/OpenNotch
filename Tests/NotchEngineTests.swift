@@ -30,6 +30,7 @@ final class FakeDesktop: DesktopSystem {
     var failsToSet = false
     /// Like NSWorkspace with an Apple wallpaper: no file reported, so only the wallpaper store says what is shown.
     var reportsNoFile = false
+    var isDark = false
     private var wallpapers: [SpaceKey: (url: URL?, options: DesktopOptions)] = [:]
     private(set) var setCount = 0
 
@@ -60,6 +61,8 @@ final class FakeDesktop: DesktopSystem {
         self[currentSpace, on: display] = (url, options)
         setCount += 1
     }
+
+    func appearance() -> Appearance { isDark ? .dark : .light }
 
     func indexPlist() -> Data? {
         var spaces: [String: [String: [String: Any]]] = [:]
@@ -429,5 +432,43 @@ struct NotchEngineTests {
         await engine.sync(enabled: false, corners: .off)
         #expect(desktop[""]?.url == photo)
         #expect(try renders() == [shown.lastPathComponent])
+    }
+
+    func bandPixel(_ space: String = "") throws -> [UInt8] {
+        TestImages.Pixels(try WallpaperRenderer.load(try #require(desktop[space]?.url)))[0, 0]
+    }
+
+    @Test func theBandFollowsTheAppearance() async throws {
+        let (engine, _) = try makeEngine()
+        let band = BandColors(light: RGBA(red: 1, green: 1, blue: 1), dark: .black)
+        await engine.sync(enabled: true, corners: .off, band: band)
+        #expect(try bandPixel() == [255, 255, 255])
+        desktop.isDark = true
+        await engine.sync(enabled: true, corners: .off, band: band)
+        #expect(try bandPixel() == [0, 0, 0])
+        #expect(desktop.setCount == 2)
+        #expect(try renders().count == 1)
+    }
+
+    @Test func withOneBandColorAnAppearanceChangeRedrawsNothing() async throws {
+        let (engine, _) = try makeEngine()
+        await engine.sync(enabled: true, corners: .off)
+        desktop.isDark = true
+        await engine.sync(enabled: true, corners: .off)
+        #expect(desktop.setCount == 1)
+    }
+
+    @Test(.enabled(if: DynamicFixture.canEncode, "This runner can't encode HEIC, so there is no dynamic wallpaper to test with"))
+    func aLightAndDarkWallpaperIsNotRedrawnWhenTheAppearanceChanges() async throws {
+        let dynamic = folder.appending(path: "light-and-dark.heic")
+        try #require(DynamicFixture.heic(DynamicFixture.colors.map { DynamicFixture.solid($0) }, tags: DynamicFixture.lightAndDark)).write(to: dynamic)
+        desktop[""] = (dynamic, options)
+        let (engine, _) = try makeEngine()
+        let band = BandColors(light: RGBA(red: 1, green: 1, blue: 1), dark: .black)
+        await engine.sync(enabled: true, corners: .off, band: band)
+        desktop.isDark = true
+        await engine.sync(enabled: true, corners: .off, band: band)
+        #expect(engine.statuses == statuses(.applied, Displays.builtin))
+        #expect(desktop.setCount == 1)
     }
 }

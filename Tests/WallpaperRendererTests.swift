@@ -5,15 +5,31 @@ import Testing
 struct WallpaperRendererTests {
     let geometry = BarGeometry(pixelWidth: 160, pixelHeight: 100, bandHeight: 8, scale: 2)
     let teal = RGBA(red: 0, green: 0.5, blue: 0.5)
+    let silver = RGBA(red: 0.82, green: 0.82, blue: 0.84)
     let black: [UInt8] = [0, 0, 0]
 
-    func render(_ placement: Placement = .fill, corners: CornerStyle = .off) throws -> CGImage {
-        try WallpaperRenderer.render(TestImages.quadrants(), geometry: geometry, placement: placement, background: teal, corners: corners)
+    func render(_ placement: Placement = .fill, corners: CornerStyle = .off, band: RGBA = .black) throws -> CGImage {
+        try WallpaperRenderer.render(TestImages.quadrants(), geometry: geometry, placement: placement, background: teal, corners: corners, band: band)
     }
 
     @Test(arguments: CornerStyle.allCases)
     func fillMatchesGolden(corners: CornerStyle) throws {
         try Golden.check(render(corners: corners), "fill-corners-\(corners.rawValue)")
+    }
+
+    @Test func aColoredBandMatchesGolden() throws {
+        try Golden.check(render(corners: .medium, band: silver), "band-silver-corners-medium")
+    }
+
+    @Test func aColoredBandIsThatColorEdgeToEdge() throws {
+        let pixels = TestImages.Pixels(try render(band: silver))
+        let expected = [209, 209, 214]
+        for y in 0..<geometry.bandHeight {
+            for x in 0..<geometry.pixelWidth {
+                #expect(zip(pixels[x, y], expected).allSatisfy { abs(Int($0) - $1) <= 1 }, "band pixel \(x),\(y) is \(pixels[x, y])")
+            }
+        }
+        #expect(pixels[40, geometry.bandHeight] == [255, 0, 0])
     }
 
     @Test(arguments: [Placement.fit, .stretch, .center])

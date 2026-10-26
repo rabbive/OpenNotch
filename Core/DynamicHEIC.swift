@@ -21,6 +21,8 @@ public enum DynamicHEIC {
 
     /// Renders every frame the way `WallpaperRenderer.render` renders a still, then writes the frames
     /// in their original order with their apple_desktop tags, so macOS keeps switching on schedule.
+    /// A frame that a light-and-dark wallpaper shows in one appearance gets that appearance's band
+    /// color. Every other frame gets `band.light`, so pass one color twice to paint all frames alike.
     /// `progress` is called from the rendering threads as each frame finishes.
     public static func render(
         _ source: URL,
@@ -29,11 +31,13 @@ public enum DynamicHEIC {
         placement: Placement,
         background: RGBA,
         corners: CornerStyle,
+        band: BandColors,
         progress: @Sendable (RenderProgress) -> Void = { _ in }
     ) throws {
         guard let images = CGImageSourceCreateWithURL(source as CFURL, nil), CGImageSourceGetCount(images) > 0
         else { throw RenderError(description: "Can't read \(source.lastPathComponent)") }
         let count = CGImageSourceGetCount(images)
+        let appearances = appearanceFrames(images) ?? [:]
         let frames = FrameSlots(count: count)
         DispatchQueue.concurrentPerform(iterations: count) { index in
             let frame = Result<CGImage, any Error> {
@@ -41,7 +45,14 @@ public enum DynamicHEIC {
                 guard let reader = CGImageSourceCreateWithURL(source as CFURL, nil),
                       let image = CGImageSourceCreateImageAtIndex(reader, index, nil)
                 else { throw RenderError(description: "Can't read frame \(index) of \(source.lastPathComponent)") }
-                return try WallpaperRenderer.render(image, geometry: geometry, placement: placement, background: background, corners: corners)
+                return try WallpaperRenderer.render(
+                    image,
+                    geometry: geometry,
+                    placement: placement,
+                    background: background,
+                    corners: corners,
+                    band: band[appearances[index] ?? .light]
+                )
             }
             progress(RenderProgress(framesDone: frames.store(at: index, frame), frameCount: count))
         }
@@ -59,6 +70,29 @@ public enum DynamicHEIC {
         }
         guard CGImageDestinationFinalize(output) else { throw RenderError(description: "Can't encode \(destination.lastPathComponent)") }
         _ = try FileManager.default.replaceItemAt(destination, withItemAt: partial)
+    }
+
+    /// Whether macOS picks the frame by the appearance, so a render needs both band colors.
+    public static func switchesWithAppearance(_ url: URL) -> Bool {
+        CGImageSourceCreateWithURL(url as CFURL, nil).flatMap { appearanceFrames($0) } != nil
+    }
+
+    /// The frames a light-and-dark wallpaper shows in each appearance, from its apr tag. Nil for a
+    /// time-of-day wallpaper (solar or h24 tags), whose frames follow the clock in either appearance.
+    static func appearanceFrames(_ source: CGImageSource) -> [Int: Appearance]? {
+        var tags: [String: CGImageMetadataTag] = [:]
+        for index in 0..<CGImageSourceGetCount(source) {
+            for tag in appleDesktopTagList(of: source, at: index) {
+                if let name = CGImageMetadataTagCopyName(tag) as String? { tags[name] = tags[name] ?? tag }
+            }
+        }
+        guard tags["solar"] == nil, tags["h24"] == nil,
+              let encoded = tags["apr"].flatMap({ CGImageMetadataTagCopyValue($0) as? String }),
+              let data = Data(base64Encoded: encoded, options: .ignoreUnknownCharacters),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let light = plist["l"] as? Int, let dark = plist["d"] as? Int, light != dark
+        else { return nil }
+        return [light: .light, dark: .dark]
     }
 
     /// macOS switches frames only when one carries a schedule. A GIF or multi-page TIFF shows as a still.

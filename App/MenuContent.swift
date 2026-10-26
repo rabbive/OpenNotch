@@ -18,6 +18,16 @@ struct MenuContent: View {
                 Text(style.title).tag(style)
             }
         }
+        Picker("Bar Color in Light Mode", selection: Binding(get: { model.lightBand }, set: { model.setBand($0, for: .light) })) {
+            ForEach(BandColor.allCases, id: \.self) { color in
+                Text(color.title).tag(color)
+            }
+        }
+        Picker("Bar Color in Dark Mode", selection: Binding(get: { model.darkBand }, set: { model.setBand($0, for: .dark) })) {
+            ForEach(BandColor.allCases, id: \.self) { color in
+                Text(color.title).tag(color)
+            }
+        }
         Toggle("Launch at Login", isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) }))
         Button("Hide Menu Bar Icon") { model.isIconVisible = false }
         Divider()
@@ -61,6 +71,17 @@ extension CornerStyle {
         case .small: "Small"
         case .medium: "Medium"
         case .high: "High"
+        }
+    }
+}
+
+extension BandColor {
+    var title: String {
+        switch self {
+        case .black: "Black"
+        case .graphite: "Graphite"
+        case .silver: "Silver"
+        case .white: "White"
         }
     }
 }

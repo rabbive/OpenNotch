@@ -10,6 +10,8 @@ final class AppModel {
     private(set) var isEnabled: Bool
     private(set) var builtinOnly: Bool
     private(set) var corners: CornerStyle
+    private(set) var lightBand: BandColor
+    private(set) var darkBand: BandColor
     private(set) var launchAtLogin = AppModel.launchesAtLogin
     private(set) var startupError: String?
     /// Never saved, so a relaunch always shows the icon and the user can't lock themselves out.
@@ -29,12 +31,16 @@ final class AppModel {
         static let enabled = "enabled"
         static let builtinOnly = "builtinOnly"
         static let corners = "corners"
+        static let lightBand = "lightBand"
+        static let darkBand = "darkBand"
     }
 
     init() {
         isEnabled = defaults.bool(forKey: Key.enabled)
         builtinOnly = defaults.object(forKey: Key.builtinOnly) as? Bool ?? true
         corners = defaults.string(forKey: Key.corners).flatMap(CornerStyle.init(rawValue:)) ?? .off
+        lightBand = defaults.string(forKey: Key.lightBand).flatMap(BandColor.init(rawValue:)) ?? .black
+        darkBand = defaults.string(forKey: Key.darkBand).flatMap(BandColor.init(rawValue:)) ?? .black
         do {
             let desktop = LiveDesktop()
             let store = try Store(directory: Store.defaultDirectory) { desktop.indexPlist().map { IndexPlist.imageURLs(in: $0) } ?? [] }
@@ -65,6 +71,15 @@ final class AppModel {
         scheduleSync(after: .zero)
     }
 
+    func setBand(_ color: BandColor, for appearance: Appearance) {
+        switch appearance {
+        case .light: lightBand = color
+        case .dark: darkBand = color
+        }
+        defaults.set(color.rawValue, forKey: appearance == .light ? Key.lightBand : Key.darkBand)
+        scheduleSync(after: .zero)
+    }
+
     func setLaunchAtLogin(_ on: Bool) {
         do {
             if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
@@ -86,7 +101,12 @@ final class AppModel {
         pendingSync = Task { [weak self] in
             try? await Task.sleep(for: delay)
             guard !Task.isCancelled, let self, let engine else { return }
-            await engine.sync(enabled: isEnabled, builtinOnly: builtinOnly, corners: corners)
+            await engine.sync(
+                enabled: isEnabled,
+                builtinOnly: builtinOnly,
+                corners: corners,
+                band: BandColors(light: lightBand.rgba, dark: darkBand.rgba)
+            )
         }
     }
 
@@ -97,6 +117,8 @@ final class AppModel {
             (workspace, NSWorkspace.didWakeNotification),
             (workspace, NSWorkspace.screensDidWakeNotification),
             (NotificationCenter.default, NSApplication.didChangeScreenParametersNotification),
+            // Posted on every light and dark switch, including automatic ones.
+            (DistributedNotificationCenter.default() as NotificationCenter, Notification.Name("AppleInterfaceThemeChangedNotification")),
         ] {
             let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.scheduleSync() }
@@ -122,5 +144,19 @@ final class AppModel {
         source.setCancelHandler { close(descriptor) }
         source.resume()
         wallpaperStoreWatcher = source
+    }
+}
+
+/// The band colors the menu offers.
+enum BandColor: String, CaseIterable {
+    case black, graphite, silver, white
+
+    var rgba: RGBA {
+        switch self {
+        case .black: .black
+        case .graphite: RGBA(red: 0.2, green: 0.2, blue: 0.21)
+        case .silver: RGBA(red: 0.82, green: 0.82, blue: 0.84)
+        case .white: RGBA(red: 1, green: 1, blue: 1)
+        }
     }
 }

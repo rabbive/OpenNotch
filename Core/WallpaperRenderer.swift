@@ -13,14 +13,15 @@ public struct RenderError: Error, CustomStringConvertible {
 
 public enum WallpaperRenderer {
     /// Draws `source` the way macOS would place it on a `geometry`-sized screen, then paints the
-    /// band (and rounded corners) black. The result matches the screen pixel for pixel, so the
+    /// band (and rounded corners) in `band`. The result matches the screen pixel for pixel, so the
     /// system shows it unscaled whatever placement option it is set with.
     public static func render(
         _ source: CGImage,
         geometry: BarGeometry,
         placement: Placement,
         background: RGBA,
-        corners: CornerStyle
+        corners: CornerStyle,
+        band: RGBA
     ) throws -> CGImage {
         let space = source.colorSpace.flatMap { $0.model == .rgb ? $0 : nil }
             ?? CGColorSpace(name: CGColorSpace.sRGB)!
@@ -38,7 +39,7 @@ public enum WallpaperRenderer {
         context.fill(canvas)
         context.interpolationQuality = .high
         context.draw(source, in: placement.rect(for: CGSize(width: source.width, height: source.height), in: canvas.size))
-        context.setFillColor(RGBA.black.cgColor)
+        context.setFillColor(band.cgColor)
         context.addPath(maskPath(geometry: geometry, corners: corners))
         context.fillPath(using: .evenOdd)
         guard let image = context.makeImage() else { throw RenderError(description: "Can't finish the render") }

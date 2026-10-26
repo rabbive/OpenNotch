@@ -15,6 +15,8 @@ enum DynamicFixture {
         "solar": schedule(["si": [["i": 0, "z": 90], ["i": 1, "z": 180], ["i": 2, "z": 270]]]),
         "h24": schedule(["ti": [["i": 0, "t": 6], ["i": 1, "t": 12], ["i": 2, "t": 19]]]),
     ]
+    /// A light-and-dark wallpaper whose first frame is the dark one, so order alone can't pass.
+    static let lightAndDark = ["apr": schedule(["l": 1, "d": 0])]
     static let canEncode = heic([solid(.black)], tags: [:]) != nil
 
     static func schedule(_ value: [String: Any]) -> String {
@@ -93,13 +95,33 @@ struct DynamicHEICTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     }
 
-    func renderFixture(progress: @Sendable (RenderProgress) -> Void = { _ in }) throws -> CGImageSource {
+    func renderFixture(
+        tags: [String: String] = DynamicFixture.tags,
+        band: BandColors = .black,
+        progress: @Sendable (RenderProgress) -> Void = { _ in }
+    ) throws -> CGImageSource {
         let source = folder.appending(path: "dynamic.heic")
         let rendered = folder.appending(path: "rendered.heic")
-        let fixture = try #require(DynamicFixture.heic(DynamicFixture.colors.map { DynamicFixture.solid($0) }, tags: DynamicFixture.tags))
+        let fixture = try #require(DynamicFixture.heic(DynamicFixture.colors.map { DynamicFixture.solid($0) }, tags: tags))
         try fixture.write(to: source)
-        try DynamicHEIC.render(source, to: rendered, geometry: geometry, placement: .fill, background: .black, corners: .off, progress: progress)
+        try DynamicHEIC.render(
+            source,
+            to: rendered,
+            geometry: geometry,
+            placement: .fill,
+            background: .black,
+            corners: .off,
+            band: band,
+            progress: progress
+        )
         return try #require(CGImageSourceCreateWithURL(rendered as CFURL, nil))
+    }
+
+    /// The largest per-channel gap between `color` and the middle row of a frame's band. HEIC is lossy.
+    func bandError(_ rendered: CGImageSource, frame: Int, _ color: RGBA) throws -> Int {
+        let pixels = TestImages.Pixels(try #require(CGImageSourceCreateImageAtIndex(rendered, frame, nil)))
+        let expected = [color.red, color.green, color.blue].map { Int(($0 * 255).rounded()) }
+        return (0..<geometry.pixelWidth).flatMap { x in zip(pixels[x, geometry.bandHeight / 2], expected).map { abs(Int($0) - $1) } }.max() ?? 0
     }
 
     @Test func everyFrameKeepsItsPlaceUnderABlackBand() throws {
@@ -130,5 +152,31 @@ struct DynamicHEICTests {
         let count = DynamicFixture.colors.count
         #expect(log.all.map(\.framesDone).sorted() == Array(1...count))
         #expect(log.all.allSatisfy { $0.frameCount == count })
+    }
+
+    @Test func aLightAndDarkWallpaperPaintsEachFrameForItsAppearance() throws {
+        let white = RGBA(red: 1, green: 1, blue: 1)
+        let rendered = try renderFixture(tags: DynamicFixture.lightAndDark, band: BandColors(light: white, dark: .black))
+        #expect(try bandError(rendered, frame: 0, .black) <= 16)
+        #expect(try bandError(rendered, frame: 1, white) <= 16)
+        #expect(DynamicFixture.appleDesktopTags(of: rendered, at: 0) == DynamicFixture.lightAndDark)
+    }
+
+    @Test func aTimeOfDayWallpaperGetsOneColorOnEveryFrame() throws {
+        let white = RGBA(red: 1, green: 1, blue: 1)
+        let rendered = try renderFixture(band: BandColors(light: white, dark: .black))
+        for frame in DynamicFixture.colors.indices {
+            #expect(try bandError(rendered, frame: frame, white) <= 16, "frame \(frame)")
+        }
+    }
+
+    @Test func onlyALightAndDarkWallpaperSwitchesWithTheAppearance() throws {
+        let frames = DynamicFixture.colors.map { DynamicFixture.solid($0) }
+        let lightAndDark = folder.appending(path: "light-and-dark.heic")
+        let timeOfDay = folder.appending(path: "time-of-day.heic")
+        try #require(DynamicFixture.heic(frames, tags: DynamicFixture.lightAndDark)).write(to: lightAndDark)
+        try #require(DynamicFixture.heic(frames, tags: DynamicFixture.tags)).write(to: timeOfDay)
+        #expect(DynamicHEIC.switchesWithAppearance(lightAndDark))
+        #expect(!DynamicHEIC.switchesWithAppearance(timeOfDay))
     }
 }

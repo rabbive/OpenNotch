@@ -19,6 +19,7 @@ OpenNotch supports:
 - Still images (JPEG, PNG, HEIC, and other single-image files) with Fill, Fit, Stretch, or Center placement.
 - Dynamic (time-of-day and light/dark) HEIC wallpapers. Every frame gets the band, and the schedule is kept.
 - Optional rounded top corners (small, medium, high).
+- A band color for light mode and one for dark mode: Black (the default), Graphite, Silver, or White. The band follows the system appearance. In a light-and-dark HEIC wallpaper, each frame gets the color for its appearance.
 - Launch at login.
 - **Hide Menu Bar Icon**. OpenNotch keeps running. Open the app again to show the icon; it also comes back on every launch.
 
@@ -48,7 +49,11 @@ xattr -dr com.apple.quarantine /Applications/OpenNotch.app
 open /Applications/OpenNotch.app
 ```
 
-To update the golden images after an intended rendering change, run `RECORD_GOLDENS=1 swift test` and review the changed PNGs in `Tests/Goldens`.
+Or run `Scripts/install-ci-build.sh [--open] [commit]`. It installs the CI build of PR #1's head, or of the given commit, after checking that its macOS 27 job passed.
+
+To test a build on a Mac, follow the [manual test checklist](docs/manual-test.md). `Scripts/mac-probe.sh` prints read-only diagnostics and backs up the wallpaper store first.
+
+To update the golden images after an intended rendering change, run `RECORD_GOLDENS=1 swift test` and review the changed PNGs in `Tests/Goldens`. A test whose golden is missing fails and prints the PNG as `golden <name> <line>:` lines of decimal bytes, so a CI run can record one without a Mac.
 
 ## Layout
 

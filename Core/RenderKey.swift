@@ -11,14 +11,25 @@ public struct RenderKey: Hashable, Codable, Sendable {
     public var background: RGBA
     public var geometry: BarGeometry
     public var corners: CornerStyle
+    /// One color twice, unless the frames switch with the appearance; see `DynamicHEIC.render`.
+    public var band: BandColors
 
-    public init(sourcePath: String, sourceStamp: String, placement: Placement, background: RGBA, geometry: BarGeometry, corners: CornerStyle) {
+    public init(
+        sourcePath: String,
+        sourceStamp: String,
+        placement: Placement,
+        background: RGBA,
+        geometry: BarGeometry,
+        corners: CornerStyle,
+        band: BandColors
+    ) {
         self.sourcePath = sourcePath
         self.sourceStamp = sourceStamp
         self.placement = placement
         self.background = background
         self.geometry = geometry
         self.corners = corners
+        self.band = band
     }
 
     /// Bump when the renderer's output changes for the same inputs.

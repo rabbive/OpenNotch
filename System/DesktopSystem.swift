@@ -9,6 +9,7 @@ public protocol DesktopSystem {
     func wallpaper(display: String) -> (url: URL?, options: DesktopOptions)
     func setWallpaper(_ url: URL, options: DesktopOptions, display: String) throws
     func indexPlist() -> Data?
+    func appearance() -> Appearance
 }
 
 @MainActor
@@ -33,6 +34,10 @@ public struct LiveDesktop: DesktopSystem {
     }
 
     public func indexPlist() -> Data? { try? Data(contentsOf: IndexPlist.defaultURL) }
+
+    public func appearance() -> Appearance {
+        NSApplication.shared.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .dark : .light
+    }
 
     private func screen(_ uuid: String) -> NSScreen? {
         NSScreen.screens.first { screen in

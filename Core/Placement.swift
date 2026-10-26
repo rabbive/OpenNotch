@@ -41,6 +41,36 @@ public struct RGBA: Hashable, Codable, Sendable {
     public var cgColor: CGColor { CGColor(srgbRed: red, green: green, blue: blue, alpha: alpha) }
 }
 
+/// The system's light or dark appearance, which the menu bar follows.
+public enum Appearance: String, Codable, Sendable {
+    case light, dark
+}
+
+/// The band's color under a light and under a dark menu bar.
+public struct BandColors: Hashable, Codable, Sendable {
+    public var light: RGBA
+    public var dark: RGBA
+
+    public init(light: RGBA, dark: RGBA) {
+        self.light = light
+        self.dark = dark
+    }
+
+    /// The same color whatever the appearance.
+    public init(_ color: RGBA) {
+        self.init(light: color, dark: color)
+    }
+
+    public static let black = BandColors(.black)
+
+    public subscript(appearance: Appearance) -> RGBA {
+        switch appearance {
+        case .light: light
+        case .dark: dark
+        }
+    }
+}
+
 public enum CornerStyle: String, CaseIterable, Codable, Sendable {
     case off, small, medium, high
 
