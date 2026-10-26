@@ -65,6 +65,24 @@ enum DynamicFixture {
     }
 }
 
+/// Progress arrives on the rendering threads.
+final class ProgressLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var reports: [RenderProgress] = []
+
+    func append(_ report: RenderProgress) {
+        lock.lock()
+        defer { lock.unlock() }
+        reports.append(report)
+    }
+
+    var all: [RenderProgress] {
+        lock.lock()
+        defer { lock.unlock() }
+        return reports
+    }
+}
+
 @Suite(.enabled(if: DynamicFixture.canEncode, "This runner can't encode HEIC, so there is no dynamic wallpaper to test with"))
 struct DynamicHEICTests {
     let geometry = BarGeometry(pixelWidth: 128, pixelHeight: 80, bandHeight: 10, scale: 2)
@@ -75,12 +93,12 @@ struct DynamicHEICTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     }
 
-    func renderFixture() throws -> CGImageSource {
+    func renderFixture(progress: @Sendable (RenderProgress) -> Void = { _ in }) throws -> CGImageSource {
         let source = folder.appending(path: "dynamic.heic")
         let rendered = folder.appending(path: "rendered.heic")
         let fixture = try #require(DynamicFixture.heic(DynamicFixture.colors.map { DynamicFixture.solid($0) }, tags: DynamicFixture.tags))
         try fixture.write(to: source)
-        try DynamicHEIC.render(source, to: rendered, geometry: geometry, placement: .fill, background: .black, corners: .off)
+        try DynamicHEIC.render(source, to: rendered, geometry: geometry, placement: .fill, background: .black, corners: .off, progress: progress)
         return try #require(CGImageSourceCreateWithURL(rendered as CFURL, nil))
     }
 
@@ -104,5 +122,13 @@ struct DynamicHEICTests {
         let rendered = try renderFixture()
         #expect(CGImageSourceGetType(rendered) as String? == UTType.heic.identifier)
         #expect(DynamicFixture.appleDesktopTags(of: rendered, at: 0) == DynamicFixture.tags)
+    }
+
+    @Test func progressCountsEachFrameOnce() throws {
+        let log = ProgressLog()
+        _ = try renderFixture { log.append($0) }
+        let count = DynamicFixture.colors.count
+        #expect(log.all.map(\.framesDone).sorted() == Array(1...count))
+        #expect(log.all.allSatisfy { $0.frameCount == count })
     }
 }

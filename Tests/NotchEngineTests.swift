@@ -1,5 +1,6 @@
 import AppKit
 import ImageIO
+import Observation
 import OpenNotchCore
 import OpenNotchSystem
 import Testing
@@ -60,6 +61,12 @@ final class FakeDesktop: DesktopSystem {
     func indexPlist() -> Data? { nil }
 }
 
+/// A sync started from an observation callback, kept so the test can wait for it.
+@MainActor
+final class StartedSync {
+    var task: Task<Void, Never>?
+}
+
 @MainActor
 struct NotchEngineTests {
     let folder: URL
@@ -89,18 +96,23 @@ struct NotchEngineTests {
         try FileManager.default.contentsOfDirectory(atPath: folder.appending(path: "State/Renders").path)
     }
 
-    func visit(_ space: String, _ engine: NotchEngine, enabled: Bool, builtinOnly: Bool = true) {
+    func visit(_ space: String, _ engine: NotchEngine, enabled: Bool, builtinOnly: Bool = true) async {
         desktop.currentSpace = space
-        engine.sync(enabled: enabled, builtinOnly: builtinOnly, corners: .off)
+        await engine.sync(enabled: enabled, builtinOnly: builtinOnly, corners: .off)
     }
 
     func statuses(_ status: NotchStatus, _ displays: DisplaySnapshot...) -> [DisplayStatus] {
         displays.map { DisplayStatus(name: $0.name, status: status) }
     }
 
-    @Test func turningOnShowsABandedRenderWithTheOriginalOptions() throws {
+    /// Runs `action` once, the moment a render starts drawing, while it still runs.
+    func whenPaintingStarts(_ engine: NotchEngine, _ action: @escaping @MainActor @Sendable () -> Void) {
+        withObservationTracking { _ = engine.painting } onChange: { MainActor.assumeIsolated(action) }
+    }
+
+    @Test func turningOnShowsABandedRenderWithTheOriginalOptions() async throws {
         let (engine, store) = try makeEngine()
-        engine.sync(enabled: true, corners: .off)
+        await engine.sync(enabled: true, corners: .off)
         #expect(engine.statuses == statuses(.applied, Displays.builtin))
         let shown = try #require(desktop[""]?.url)
         #expect(store.isRender(shown))
@@ -111,140 +123,140 @@ struct NotchEngineTests {
         #expect(pixels[10, 6] != [0, 0, 0])
     }
 
-    @Test func syncingAgainSetsNothing() throws {
+    @Test func syncingAgainSetsNothing() async throws {
         let (engine, _) = try makeEngine()
-        engine.sync(enabled: true, corners: .off)
-        engine.sync(enabled: true, corners: .off)
+        await engine.sync(enabled: true, corners: .off)
+        await engine.sync(enabled: true, corners: .off)
         #expect(desktop.setCount == 1)
     }
 
-    @Test func turningOffRestoresTheSpaceOnScreenAndListsTheRest() throws {
+    @Test func turningOffRestoresTheSpaceOnScreenAndListsTheRest() async throws {
         let (engine, _) = try makeEngine()
-        for space in ["", "S2", "S3", ""] { visit(space, engine, enabled: true) }
-        engine.sync(enabled: false, corners: .off)
+        for space in ["", "S2", "S3", ""] { await visit(space, engine, enabled: true) }
+        await engine.sync(enabled: false, corners: .off)
         #expect(desktop[""]?.url == photo)
         #expect(desktop[""]?.options == options)
         #expect(engine.spacesToVisit == ["Desktop 2", "Desktop 3"])
     }
 
-    @Test func visitingEachSpaceWhileOffRestoresItAndCleansUp() throws {
+    @Test func visitingEachSpaceWhileOffRestoresItAndCleansUp() async throws {
         let (engine, _) = try makeEngine()
-        for space in ["", "S2", "S3", ""] { visit(space, engine, enabled: true) }
-        engine.sync(enabled: false, corners: .off)
-        visit("S2", engine, enabled: false)
+        for space in ["", "S2", "S3", ""] { await visit(space, engine, enabled: true) }
+        await engine.sync(enabled: false, corners: .off)
+        await visit("S2", engine, enabled: false)
         #expect(desktop["S2"]?.url == photo)
         #expect(engine.spacesToVisit == ["Desktop 3"])
-        visit("S3", engine, enabled: false)
+        await visit("S3", engine, enabled: false)
         #expect(desktop["S3"]?.url == photo)
         #expect(engine.spacesToVisit.isEmpty)
         #expect(try renders().isEmpty)
     }
 
-    @Test func revertWorksAfterARelaunch() throws {
-        try makeEngine().0.sync(enabled: true, corners: .off)
+    @Test func revertWorksAfterARelaunch() async throws {
+        try await makeEngine().0.sync(enabled: true, corners: .off)
         let (relaunched, _) = try makeEngine()
-        relaunched.sync(enabled: false, corners: .off)
+        await relaunched.sync(enabled: false, corners: .off)
         #expect(desktop[""]?.url == photo)
         #expect(desktop[""]?.options == options)
     }
 
-    @Test func aNewWallpaperBecomesTheOneToRestore() throws {
+    @Test func aNewWallpaperBecomesTheOneToRestore() async throws {
         let (engine, _) = try makeEngine()
-        engine.sync(enabled: true, corners: .off)
+        await engine.sync(enabled: true, corners: .off)
         desktop[""] = (otherPhoto, options)
-        engine.sync(enabled: true, corners: .off)
+        await engine.sync(enabled: true, corners: .off)
         #expect(desktop.setCount == 2)
         #expect(try renders().count == 1)
-        engine.sync(enabled: false, corners: .off)
+        await engine.sync(enabled: false, corners: .off)
         #expect(desktop[""]?.url == otherPhoto)
     }
 
-    @Test func aWallpaperChangedWhileAwayIsKept() throws {
+    @Test func aWallpaperChangedWhileAwayIsKept() async throws {
         let (engine, _) = try makeEngine()
-        for space in ["S2", ""] { visit(space, engine, enabled: true) }
-        engine.sync(enabled: false, corners: .off)
+        for space in ["S2", ""] { await visit(space, engine, enabled: true) }
+        await engine.sync(enabled: false, corners: .off)
         desktop["S2"] = (otherPhoto, options)
         let sets = desktop.setCount
-        visit("S2", engine, enabled: false)
+        await visit("S2", engine, enabled: false)
         #expect(desktop["S2"]?.url == otherPhoto)
         #expect(desktop.setCount == sets)
         #expect(engine.spacesToVisit.isEmpty)
     }
 
-    @Test func changingCornersReplacesTheRender() throws {
+    @Test func changingCornersReplacesTheRender() async throws {
         let (engine, _) = try makeEngine()
-        engine.sync(enabled: true, corners: .off)
-        engine.sync(enabled: true, corners: .high)
+        await engine.sync(enabled: true, corners: .off)
+        await engine.sync(enabled: true, corners: .high)
         #expect(desktop.setCount == 2)
         #expect(try renders().count == 1)
     }
 
-    @Test func fullScreenSpacesAreLeftAlone() throws {
+    @Test func fullScreenSpacesAreLeftAlone() async throws {
         let (engine, _) = try makeEngine()
         desktop.fullScreen = ["S2"]
-        visit("S2", engine, enabled: true)
+        await visit("S2", engine, enabled: true)
         #expect(engine.statuses == statuses(.fullScreenSpace, Displays.builtin))
         #expect(desktop.setCount == 0)
     }
 
-    @Test func unsupportedWallpapersAreLeftAlone() throws {
+    @Test func unsupportedWallpapersAreLeftAlone() async throws {
         let (engine, _) = try makeEngine()
         desktop[""] = (folder, options)
-        engine.sync(enabled: true, corners: .off)
+        await engine.sync(enabled: true, corners: .off)
         #expect(engine.statuses == statuses(.unsupportedWallpaper, Displays.builtin))
         #expect(desktop.setCount == 0)
     }
 
     @Test(.enabled(if: DynamicFixture.canEncode, "This runner can't encode HEIC, so there is no dynamic wallpaper to test with"))
-    func dynamicWallpapersKeepEveryFrameAndTheirSchedule() throws {
+    func dynamicWallpapersKeepEveryFrameAndTheirSchedule() async throws {
         let dynamic = folder.appending(path: "dynamic.heic")
         try #require(DynamicFixture.heic(DynamicFixture.colors.map { DynamicFixture.solid($0) }, tags: DynamicFixture.tags)).write(to: dynamic)
         desktop[""] = (dynamic, options)
         let (engine, store) = try makeEngine()
-        engine.sync(enabled: true, corners: .off)
+        await engine.sync(enabled: true, corners: .off)
         #expect(engine.statuses == statuses(.applied, Displays.builtin))
         let shown = try #require(desktop[""]?.url)
         #expect(store.isRender(shown))
         let frames = try #require(CGImageSourceCreateWithURL(shown as CFURL, nil))
         #expect(CGImageSourceGetCount(frames) == DynamicFixture.colors.count)
         #expect(DynamicFixture.appleDesktopTags(of: frames, at: 0) == DynamicFixture.tags)
-        engine.sync(enabled: false, corners: .off)
+        await engine.sync(enabled: false, corners: .off)
         #expect(desktop[""]?.url == dynamic)
         #expect(desktop[""]?.options == options)
         #expect(try renders().isEmpty)
     }
 
-    @Test func removedSpacesDropOffTheList() throws {
+    @Test func removedSpacesDropOffTheList() async throws {
         let (engine, _) = try makeEngine()
-        for space in ["S2", ""] { visit(space, engine, enabled: true) }
-        engine.sync(enabled: false, corners: .off)
+        for space in ["S2", ""] { await visit(space, engine, enabled: true) }
+        await engine.sync(enabled: false, corners: .off)
         #expect(engine.spacesToVisit == ["Desktop 2"])
         desktop.spaceIDs = [""]
-        engine.sync(enabled: false, corners: .off)
+        await engine.sync(enabled: false, corners: .off)
         #expect(engine.spacesToVisit.isEmpty)
     }
 
-    @Test func noBuiltinDisplayMeansNothingToDo() throws {
+    @Test func noBuiltinDisplayMeansNothingToDo() async throws {
         let (engine, _) = try makeEngine()
         desktop.connected = [Displays.external]
-        engine.sync(enabled: true, corners: .off)
+        await engine.sync(enabled: true, corners: .off)
         #expect(engine.statuses.isEmpty)
         #expect(desktop.setCount == 0)
     }
 
-    @Test func macBookScreenOnlyLeavesExternalDisplaysAlone() throws {
+    @Test func macBookScreenOnlyLeavesExternalDisplaysAlone() async throws {
         let (engine, _) = try makeEngine()
         desktop.connected = [Displays.builtin, Displays.external]
-        engine.sync(enabled: true, corners: .off)
+        await engine.sync(enabled: true, corners: .off)
         #expect(engine.statuses == statuses(.applied, Displays.builtin))
         #expect(desktop["", on: "EXTERNAL"]?.url == photo)
         #expect(desktop.setCount == 1)
     }
 
-    @Test func everyDisplayGetsABandOfItsOwnSize() throws {
+    @Test func everyDisplayGetsABandOfItsOwnSize() async throws {
         let (engine, store) = try makeEngine()
         desktop.connected = [Displays.builtin, Displays.external]
-        engine.sync(enabled: true, builtinOnly: false, corners: .off)
+        await engine.sync(enabled: true, builtinOnly: false, corners: .off)
         #expect(engine.statuses == statuses(.applied, Displays.builtin, Displays.external))
 
         let builtin = TestImages.Pixels(try WallpaperRenderer.load(try #require(desktop[""]?.url)))
@@ -258,32 +270,32 @@ struct NotchEngineTests {
         #expect(external.width == 48 && external.height == 30)
         #expect(external[0, 2] == [0, 0, 0] && external[10, 3] != [0, 0, 0])
 
-        engine.sync(enabled: true, builtinOnly: false, corners: .off)
+        await engine.sync(enabled: true, builtinOnly: false, corners: .off)
         #expect(desktop.setCount == 2)
     }
 
-    @Test func turningOffRestoresEveryDisplay() throws {
+    @Test func turningOffRestoresEveryDisplay() async throws {
         let (engine, _) = try makeEngine()
         desktop.connected = [Displays.builtin, Displays.external]
-        for space in ["", "S2", ""] { visit(space, engine, enabled: true, builtinOnly: false) }
-        visit("", engine, enabled: false, builtinOnly: false)
+        for space in ["", "S2", ""] { await visit(space, engine, enabled: true, builtinOnly: false) }
+        await visit("", engine, enabled: false, builtinOnly: false)
         for display in ["BUILTIN", "EXTERNAL"] {
             #expect(desktop["", on: display]?.url == photo)
             #expect(desktop["", on: display]?.options == options)
         }
         #expect(engine.spacesToVisit == ["Desktop 2", "Desktop 2 on Studio Display"])
-        visit("S2", engine, enabled: false, builtinOnly: false)
+        await visit("S2", engine, enabled: false, builtinOnly: false)
         #expect(desktop["S2", on: "EXTERNAL"]?.url == photo)
         #expect(engine.spacesToVisit.isEmpty)
         #expect(try renders().isEmpty)
     }
 
-    @Test func turningOnMacBookScreenOnlyRestoresExternalDisplays() throws {
+    @Test func turningOnMacBookScreenOnlyRestoresExternalDisplays() async throws {
         let (engine, _) = try makeEngine()
         desktop.connected = [Displays.builtin, Displays.external]
-        engine.sync(enabled: true, builtinOnly: false, corners: .off)
+        await engine.sync(enabled: true, builtinOnly: false, corners: .off)
         #expect(try renders().count == 2)
-        engine.sync(enabled: true, builtinOnly: true, corners: .off)
+        await engine.sync(enabled: true, builtinOnly: true, corners: .off)
         #expect(desktop["", on: "EXTERNAL"]?.url == photo)
         #expect(desktop["", on: "EXTERNAL"]?.options == options)
         #expect(desktop[""]?.url != photo)
@@ -291,22 +303,22 @@ struct NotchEngineTests {
         #expect(try renders().count == 1)
     }
 
-    @Test func aDisplayDisconnectedWhileOnIsRestoredWhenItReturns() throws {
+    @Test func aDisplayDisconnectedWhileOnIsRestoredWhenItReturns() async throws {
         let (engine, _) = try makeEngine()
         desktop.connected = [Displays.builtin, Displays.external]
-        engine.sync(enabled: true, builtinOnly: false, corners: .off)
+        await engine.sync(enabled: true, builtinOnly: false, corners: .off)
         desktop.connected = [Displays.builtin]
-        engine.sync(enabled: false, builtinOnly: false, corners: .off)
+        await engine.sync(enabled: false, builtinOnly: false, corners: .off)
         #expect(engine.spacesToVisit == ["a disconnected display"])
         desktop.connected = [Displays.builtin, Displays.external]
-        engine.sync(enabled: false, builtinOnly: false, corners: .off)
+        await engine.sync(enabled: false, builtinOnly: false, corners: .off)
         #expect(desktop["", on: "EXTERNAL"]?.url == photo)
         #expect(engine.spacesToVisit.isEmpty)
     }
 
-    @Test func strayRendersAreDeletedAndTheShownOneKept() throws {
+    @Test func strayRendersAreDeletedAndTheShownOneKept() async throws {
         let (engine, _) = try makeEngine()
-        engine.sync(enabled: true, corners: .off)
+        await engine.sync(enabled: true, corners: .off)
         let shown = try #require(desktop[""]?.url)
         let rendersFolder = folder.appending(path: "State/Renders")
         for stray in ["v0-0123456789ab.png", "\(shown.lastPathComponent).partial"] {
@@ -314,19 +326,43 @@ struct NotchEngineTests {
         }
         let (relaunched, _) = try makeEngine()
         #expect(try renders() == [shown.lastPathComponent])
-        relaunched.sync(enabled: true, corners: .off)
+        await relaunched.sync(enabled: true, corners: .off)
         #expect(desktop.setCount == 1)
     }
 
-    @Test func aRenderLeftByAFailedSetIsDeleted() throws {
+    @Test func aRenderLeftByAFailedSetIsDeleted() async throws {
         let (engine, _) = try makeEngine()
         desktop.failsToSet = true
-        engine.sync(enabled: true, corners: .off)
+        await engine.sync(enabled: true, corners: .off)
         #expect(engine.statuses.count == 1 && engine.statuses[0].status != .applied)
         #expect(try renders().count == 1)
         desktop.failsToSet = false
-        engine.sync(enabled: true, corners: .high)
+        await engine.sync(enabled: true, corners: .high)
         let shown = try #require(desktop[""]?.url)
         #expect(try renders() == [shown.lastPathComponent])
+    }
+
+    @Test func turningOffDuringARenderRestoresOnceTheRenderIsSet() async throws {
+        let (engine, _) = try makeEngine()
+        let turnOff = StartedSync()
+        whenPaintingStarts(engine) { turnOff.task = Task { await engine.sync(enabled: false, corners: .off) } }
+        await engine.sync(enabled: true, corners: .off)
+        try await #require(turnOff.task).value
+        #expect(desktop[""]?.url == photo)
+        #expect(desktop[""]?.options == options)
+        #expect(engine.statuses.isEmpty)
+        #expect(engine.painting == nil)
+        #expect(try renders().isEmpty)
+    }
+
+    @Test func aSpaceSwitchDuringARenderPaintsTheSpaceNowOnScreen() async throws {
+        let (engine, store) = try makeEngine()
+        let desktop = self.desktop
+        whenPaintingStarts(engine) { desktop.currentSpace = "S2" }
+        await engine.sync(enabled: true, corners: .off)
+        #expect(desktop[""]?.url == photo)
+        #expect(store.isRender(try #require(desktop["S2"]?.url)))
+        #expect(store.applied.keys.map(\.space) == ["S2"])
+        #expect(engine.statuses == statuses(.applied, Displays.builtin))
     }
 }

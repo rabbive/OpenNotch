@@ -3,6 +3,17 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
+/// How far a render has got. A still is one frame.
+public struct RenderProgress: Equatable, Sendable {
+    public var framesDone: Int
+    public var frameCount: Int
+
+    public init(framesDone: Int = 0, frameCount: Int = 1) {
+        self.framesDone = framesDone
+        self.frameCount = frameCount
+    }
+}
+
 /// A time-of-day or light-and-dark wallpaper: one HEIC with several frames, and apple_desktop XMP
 /// tags (solar, h24, apr) that tell macOS when to show each frame.
 public enum DynamicHEIC {
@@ -10,26 +21,29 @@ public enum DynamicHEIC {
 
     /// Renders every frame the way `WallpaperRenderer.render` renders a still, then writes the frames
     /// in their original order with their apple_desktop tags, so macOS keeps switching on schedule.
+    /// `progress` is called from the rendering threads as each frame finishes.
     public static func render(
         _ source: URL,
         to destination: URL,
         geometry: BarGeometry,
         placement: Placement,
         background: RGBA,
-        corners: CornerStyle
+        corners: CornerStyle,
+        progress: @Sendable (RenderProgress) -> Void = { _ in }
     ) throws {
         guard let images = CGImageSourceCreateWithURL(source as CFURL, nil), CGImageSourceGetCount(images) > 0
         else { throw RenderError(description: "Can't read \(source.lastPathComponent)") }
         let count = CGImageSourceGetCount(images)
         let frames = FrameSlots(count: count)
         DispatchQueue.concurrentPerform(iterations: count) { index in
-            frames[index] = Result<CGImage, any Error> {
+            let frame = Result<CGImage, any Error> {
                 // Each thread opens its own reader, so no ImageIO object is shared across threads.
                 guard let reader = CGImageSourceCreateWithURL(source as CFURL, nil),
                       let image = CGImageSourceCreateImageAtIndex(reader, index, nil)
                 else { throw RenderError(description: "Can't read frame \(index) of \(source.lastPathComponent)") }
                 return try WallpaperRenderer.render(image, geometry: geometry, placement: placement, background: background, corners: corners)
             }
+            progress(RenderProgress(framesDone: frames.store(at: index, frame), frameCount: count))
         }
 
         let partial = destination.appendingPathExtension("partial")
@@ -71,21 +85,24 @@ public enum DynamicHEIC {
 private final class FrameSlots: @unchecked Sendable {
     private let lock = NSLock()
     private var slots: [Result<CGImage, any Error>?]
+    private var filled = 0
 
     init(count: Int) {
         slots = Array(repeating: nil, count: count)
     }
 
     subscript(index: Int) -> Result<CGImage, any Error>? {
-        get {
-            lock.lock()
-            defer { lock.unlock() }
-            return slots[index]
-        }
-        set {
-            lock.lock()
-            defer { lock.unlock() }
-            slots[index] = newValue
-        }
+        lock.lock()
+        defer { lock.unlock() }
+        return slots[index]
+    }
+
+    /// Returns how many frames are in, this one included.
+    func store(at index: Int, _ frame: Result<CGImage, any Error>) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        slots[index] = frame
+        filled += 1
+        return filled
     }
 }

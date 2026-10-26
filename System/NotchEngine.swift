@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import OpenNotchCore
 
 public enum NotchStatus: Equatable, Sendable {
@@ -22,6 +23,7 @@ public struct DisplayStatus: Equatable, Sendable {
 /// Brings the current Space of every display in line with the settings. Every trigger calls
 /// `sync`, and calling it again with nothing changed sets nothing.
 @MainActor
+@Observable
 public final class NotchEngine {
     private let system: DesktopSystem
     private let store: Store
@@ -32,6 +34,17 @@ public final class NotchEngine {
     /// Spaces still showing a render while OpenNotch is off. macOS only lets an app set the wallpaper
     /// of the Space on screen, so each one is restored on the user's next visit.
     public private(set) var spacesToVisit: [String] = []
+    /// The render being drawn. Nil whenever none is.
+    public private(set) var painting: RenderProgress?
+
+    @ObservationIgnored private var requested: Settings?
+    @ObservationIgnored private var running: Task<Void, Never>?
+
+    private struct Settings {
+        let enabled: Bool
+        let builtinOnly: Bool
+        let corners: CornerStyle
+    }
 
     public init(system: DesktopSystem, store: Store) {
         self.system = system
@@ -39,28 +52,44 @@ public final class NotchEngine {
     }
 
     /// With `builtinOnly`, external displays are treated as off, so any OpenNotch changed get restored.
-    public func sync(enabled: Bool, builtinOnly: Bool = true, corners: CornerStyle) {
+    /// Passes never overlap, since a render runs off the main actor: a sync asked for during a pass
+    /// waits for it, then the latest settings get one more pass. Returns once every request is applied.
+    public func sync(enabled: Bool, builtinOnly: Bool = true, corners: CornerStyle) async {
+        requested = Settings(enabled: enabled, builtinOnly: builtinOnly, corners: corners)
+        if running == nil {
+            running = Task {
+                while let settings = requested {
+                    requested = nil
+                    await pass(settings)
+                }
+                running = nil
+            }
+        }
+        await running?.value
+    }
+
+    private func pass(_ settings: Settings) async {
         let displays = system.displays()
         var statuses: [DisplayStatus] = []
         var spacesToVisit: [String] = []
         for display in displays {
-            let on = enabled && (display.isBuiltin || !builtinOnly)
+            let on = settings.enabled && (display.isBuiltin || !settings.builtinOnly)
             let spaces = system.spaces(display: display.uuid)
             let status: NotchStatus
             do {
-                status = try reconcile(display: display, spaces: spaces, enabled: on, corners: corners)
+                status = try await reconcile(display: display, spaces: spaces, enabled: on, corners: settings.corners)
             } catch {
                 status = .failed(String(describing: error))
             }
             if on || status != .off { statuses.append(DisplayStatus(name: display.name, status: status)) }
             if !on { spacesToVisit += labelsOfSpacesToVisit(display: display, spaces: spaces) }
         }
-        if !enabled { spacesToVisit += labelsOfDisconnectedDisplays(connected: displays) }
+        if !settings.enabled { spacesToVisit += labelsOfDisconnectedDisplays(connected: displays) }
         self.statuses = statuses
         self.spacesToVisit = spacesToVisit
     }
 
-    private func reconcile(display: DisplaySnapshot, spaces: DisplaySpaces?, enabled: Bool, corners: CornerStyle) throws -> NotchStatus {
+    private func reconcile(display: DisplaySnapshot, spaces: DisplaySpaces?, enabled: Bool, corners: CornerStyle) async throws -> NotchStatus {
         if let spaces {
             let live = Set(spaces.all.map(\.uuid))
             try store.forget(store.applied.keys.filter { $0.display == display.uuid && $0.space.map { !live.contains($0) } ?? false })
@@ -110,24 +139,12 @@ public final class NotchEngine {
         )
         let rendered = store.rendersDirectory.appending(path: "\(renderKey.digest).\(isDynamic ? "heic" : "png")")
         if !FileManager.default.fileExists(atPath: rendered.path) {
-            if isDynamic {
-                try DynamicHEIC.render(
-                    source,
-                    to: rendered,
-                    geometry: display.geometry,
-                    placement: renderKey.placement,
-                    background: renderKey.background,
-                    corners: corners
-                )
-            } else {
-                let image = try WallpaperRenderer.render(
-                    WallpaperRenderer.load(source),
-                    geometry: display.geometry,
-                    placement: renderKey.placement,
-                    background: renderKey.background,
-                    corners: corners
-                )
-                try WallpaperRenderer.writePNG(image, to: rendered)
+            try await paint(source, to: rendered, isDynamic: isDynamic, key: renderKey)
+            // The user can switch Spaces or pick another wallpaper while it draws; start over from what is on screen.
+            let now = system.wallpaper(display: display.uuid)
+            let spacesNow = system.spaces(display: display.uuid)
+            if spacesNow?.current.uuid != key.space || now.url != current.url || now.options != current.options {
+                return try await reconcile(display: display, spaces: spacesNow, enabled: enabled, corners: corners)
             }
         }
         if current.url?.path != rendered.path {
@@ -135,6 +152,37 @@ public final class NotchEngine {
         }
         try store.record(AppliedWallpaper(key: key, originalURL: source, originalOptions: original.options, renderedURL: rendered))
         return .applied
+    }
+
+    /// Draws off the main actor, since a dynamic wallpaper can take seconds, and keeps `painting` current.
+    private func paint(_ source: URL, to rendered: URL, isDynamic: Bool, key: RenderKey) async throws {
+        painting = RenderProgress()
+        defer { painting = nil }
+        let (updates, continuation) = AsyncStream.makeStream(of: RenderProgress.self)
+        let work = Task.detached(priority: .userInitiated) {
+            defer { continuation.finish() }
+            if isDynamic {
+                try DynamicHEIC.render(
+                    source,
+                    to: rendered,
+                    geometry: key.geometry,
+                    placement: key.placement,
+                    background: key.background,
+                    corners: key.corners
+                ) { continuation.yield($0) }
+            } else {
+                let image = try WallpaperRenderer.render(
+                    WallpaperRenderer.load(source),
+                    geometry: key.geometry,
+                    placement: key.placement,
+                    background: key.background,
+                    corners: key.corners
+                )
+                try WallpaperRenderer.writePNG(image, to: rendered)
+            }
+        }
+        for await update in updates { painting = update }
+        try await work.value
     }
 
     /// Built-in Spaces keep their v0.1 labels; the others name their display.

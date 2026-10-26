@@ -11,8 +11,6 @@ final class AppModel {
     private(set) var builtinOnly: Bool
     private(set) var corners: CornerStyle
     private(set) var launchAtLogin = SMAppService.mainApp.status == .enabled
-    private(set) var statuses: [DisplayStatus] = []
-    private(set) var spacesToVisit: [String] = []
     private(set) var startupError: String?
     /// Never saved, so a relaunch always shows the icon and the user can't lock themselves out.
     var isIconVisible = true
@@ -22,6 +20,10 @@ final class AppModel {
     @ObservationIgnored private var pendingSync: Task<Void, Never>?
     @ObservationIgnored private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     @ObservationIgnored private var wallpaperStoreWatcher: DispatchSourceFileSystemObject?
+
+    var statuses: [DisplayStatus] { engine?.statuses ?? [] }
+    var spacesToVisit: [String] { engine?.spacesToVisit ?? [] }
+    var painting: RenderProgress? { engine?.painting }
 
     private enum Key {
         static let enabled = "enabled"
@@ -76,9 +78,7 @@ final class AppModel {
         pendingSync = Task { [weak self] in
             try? await Task.sleep(for: delay)
             guard !Task.isCancelled, let self, let engine else { return }
-            engine.sync(enabled: isEnabled, builtinOnly: builtinOnly, corners: corners)
-            statuses = engine.statuses
-            spacesToVisit = engine.spacesToVisit
+            await engine.sync(enabled: isEnabled, builtinOnly: builtinOnly, corners: corners)
         }
     }
 

@@ -27,6 +27,7 @@ struct MenuContent: View {
 
     private var statusLines: [String] {
         if let startupError = model.startupError { return [startupError] }
+        if let painting = model.painting { return [painting.summary] }
         if model.statuses.isEmpty {
             guard model.isEnabled else { return ["Off"] }
             return [model.builtinOnly ? "No built-in display found" : "No display found"]
@@ -44,6 +45,12 @@ extension NotchStatus {
         case .unsupportedWallpaper: "This wallpaper type isn't supported yet"
         case .failed(let message): "Couldn't apply: \(message)"
         }
+    }
+}
+
+extension RenderProgress {
+    var summary: String {
+        frameCount > 1 ? "Painting wallpaper… \(framesDone) of \(frameCount) frames" : "Painting wallpaper…"
     }
 }
 
