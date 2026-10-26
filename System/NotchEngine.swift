@@ -99,7 +99,11 @@ public final class NotchEngine {
         let key = SpaceKey(display: display.uuid, space: spaces?.current.uuid)
         let current = system.wallpaper(display: display.uuid)
         let applied = store.applied[key]
-        let showingRender = current.url.map(store.isRender) ?? false
+        let indexPlist = system.indexPlist()
+        // NSWorkspace can report no file or a placeholder, and then the wallpaper store names what is
+        // on screen, which may be a render. A render must never be taken for the original.
+        let shown = WallpaperSource.resolve(current: current.url, display: display.uuid, space: key.space, indexPlist: indexPlist).url
+        let showingRender = shown.map(store.isRender) ?? false
 
         guard enabled else {
             if let applied, showingRender {
@@ -112,14 +116,15 @@ public final class NotchEngine {
         let original: (url: URL?, options: DesktopOptions)
         if showingRender {
             guard let applied else { return .failed("A render is showing but its original wallpaper wasn't saved") }
-            original = (applied.originalURL, applied.originalOptions)
+            // Renders are set with the original options, so other options reported with one are the user's new choice.
+            original = (applied.originalURL, current.url == shown ? current.options : applied.originalOptions)
         } else {
             original = current
         }
 
         let source: URL
         let isDynamic: Bool
-        switch WallpaperSource.resolve(current: original.url, display: display.uuid, space: key.space, indexPlist: system.indexPlist()) {
+        switch WallpaperSource.resolve(current: original.url, display: display.uuid, space: key.space, indexPlist: indexPlist) {
         case .image(let url):
             (source, isDynamic) = (url, false)
         case .dynamic(let url):
@@ -147,10 +152,12 @@ public final class NotchEngine {
                 return try await reconcile(display: display, spaces: spacesNow, enabled: enabled, corners: corners)
             }
         }
-        if current.url?.path != rendered.path {
+        // Recorded first: a crash after the set would otherwise leave a render on screen that no
+        // record names, which the next launch's sweep deletes along with the way back.
+        try store.record(AppliedWallpaper(key: key, originalURL: source, originalOptions: original.options, renderedURL: rendered))
+        if shown?.path != rendered.path {
             try system.setWallpaper(rendered, options: original.options, display: display.uuid)
         }
-        try store.record(AppliedWallpaper(key: key, originalURL: source, originalOptions: original.options, renderedURL: rendered))
         return .applied
     }
 

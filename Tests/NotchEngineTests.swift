@@ -28,6 +28,8 @@ final class FakeDesktop: DesktopSystem {
     var fullScreen: Set<String> = []
     var currentSpace = ""
     var failsToSet = false
+    /// Like NSWorkspace with an Apple wallpaper: no file reported, so only the wallpaper store says what is shown.
+    var reportsNoFile = false
     private var wallpapers: [SpaceKey: (url: URL?, options: DesktopOptions)] = [:]
     private(set) var setCount = 0
 
@@ -49,7 +51,8 @@ final class FakeDesktop: DesktopSystem {
     }
 
     func wallpaper(display: String) -> (url: URL?, options: DesktopOptions) {
-        self[currentSpace, on: display] ?? (nil, DesktopOptions())
+        let wallpaper = self[currentSpace, on: display] ?? (nil, DesktopOptions())
+        return reportsNoFile ? (nil, wallpaper.options) : wallpaper
     }
 
     func setWallpaper(_ url: URL, options: DesktopOptions, display: String) throws {
@@ -58,7 +61,14 @@ final class FakeDesktop: DesktopSystem {
         setCount += 1
     }
 
-    func indexPlist() -> Data? { nil }
+    func indexPlist() -> Data? {
+        var spaces: [String: [String: [String: Any]]] = [:]
+        for (key, wallpaper) in wallpapers {
+            guard let space = key.space, let url = wallpaper.url else { continue }
+            spaces[space, default: ["Displays": [:]]]["Displays"]![key.display] = WallpaperSourceTests.desktop(url)
+        }
+        return WallpaperSourceTests.plist(["Spaces": spaces])
+    }
 }
 
 /// A sync started from an observation callback, kept so the test can wait for it.
@@ -88,7 +98,8 @@ struct NotchEngineTests {
     }
 
     func makeEngine() throws -> (NotchEngine, Store) {
-        let store = try Store(directory: folder.appending(path: "State"))
+        let desktop = self.desktop
+        let store = try Store(directory: folder.appending(path: "State")) { IndexPlist.imageURLs(in: desktop.indexPlist() ?? Data()) }
         return (NotchEngine(system: desktop, store: store), store)
     }
 
@@ -364,5 +375,59 @@ struct NotchEngineTests {
         #expect(store.isRender(try #require(desktop["S2"]?.url)))
         #expect(store.applied.keys.map(\.space) == ["S2"])
         #expect(engine.statuses == statuses(.applied, Displays.builtin))
+    }
+
+    @Test func aRenderNamedOnlyByTheWallpaperStoreIsNeverTakenForTheOriginal() async throws {
+        let (engine, _) = try makeEngine()
+        await engine.sync(enabled: true, corners: .off)
+        desktop.reportsNoFile = true
+        await engine.sync(enabled: true, corners: .high)
+        await engine.sync(enabled: false, corners: .off)
+        desktop.reportsNoFile = false
+        #expect(desktop[""]?.url == photo)
+        #expect(desktop[""]?.options == options)
+        #expect(try renders().isEmpty)
+    }
+
+    @Test func aRecordThatCannotBeSavedSetsNothingAndIsRetried() async throws {
+        let (engine, _) = try makeEngine()
+        let state = folder.appending(path: "State").path
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: state)
+        await engine.sync(enabled: true, corners: .off)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: state)
+        #expect(engine.statuses.count == 1 && engine.statuses[0].status != .applied)
+        #expect(desktop[""]?.url == photo)
+        #expect(desktop.setCount == 0)
+
+        await engine.sync(enabled: true, corners: .off)
+        #expect(desktop.setCount == 1)
+        let (relaunched, _) = try makeEngine()
+        await relaunched.sync(enabled: false, corners: .off)
+        #expect(desktop[""]?.url == photo)
+        #expect(desktop[""]?.options == options)
+    }
+
+    @Test func aPlacementPickedWhileOnIsRenderedAndRestored() async throws {
+        let (engine, _) = try makeEngine()
+        await engine.sync(enabled: true, corners: .off)
+        let fit = DesktopOptions(scaling: 3, allowClipping: false, fillColor: NSColor(calibratedRed: 0.25, green: 0.41, blue: 0.67, alpha: 1))
+        desktop[""] = (desktop[""]?.url, fit)
+        await engine.sync(enabled: true, corners: .off)
+        #expect(desktop.setCount == 2)
+        #expect(desktop[""]?.options == fit)
+        await engine.sync(enabled: false, corners: .off)
+        #expect(desktop[""]?.url == photo)
+        #expect(desktop[""]?.options == fit)
+    }
+
+    @Test func aRenderAnotherSpaceStillShowsIsKept() async throws {
+        let (engine, _) = try makeEngine()
+        await engine.sync(enabled: true, corners: .off)
+        let shown = try #require(desktop[""]?.url)
+        // As with Show on All Spaces: macOS put the render on a Space OpenNotch has no record for.
+        desktop["S2"] = (shown, options)
+        await engine.sync(enabled: false, corners: .off)
+        #expect(desktop[""]?.url == photo)
+        #expect(try renders() == [shown.lastPathComponent])
     }
 }

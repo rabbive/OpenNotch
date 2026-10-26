@@ -1,12 +1,20 @@
 import Foundation
 import ImageIO
+import OpenNotchCore
 
 public enum WallpaperChoice: Equatable, Sendable {
     case image(URL)
-    /// A multi-image HEIC that changes with time of day or appearance.
+    /// A multi-image HEIC whose apple_desktop tags change it with time of day or appearance.
     case dynamic(URL)
     /// Aerials, Photos shuffles, Apple collections: no single image file to paint on.
     case unsupported
+
+    public var url: URL? {
+        switch self {
+        case .image(let url), .dynamic(let url): url
+        case .unsupported: nil
+        }
+    }
 }
 
 public enum WallpaperSource {
@@ -30,7 +38,7 @@ public enum WallpaperSource {
         switch CGImageSourceGetCount(source) {
         case 0: return nil
         case 1: return .image(url)
-        default: return .dynamic(url)
+        default: return DynamicHEIC.hasSchedule(source) ? .dynamic(url) : .image(url)
         }
     }
 }
@@ -53,8 +61,26 @@ public enum IndexPlist {
             (root["Displays"] as? [String: Any])?[display],
             root["AllSpacesAndDisplays"],
         ]
-        guard let desktop = mostSpecificFirst.lazy.compactMap({ ($0 as? [String: Any])?["Desktop"] as? [String: Any] }).first,
-              let choice = ((desktop["Content"] as? [String: Any])?["Choices"] as? [[String: Any]])?.first,
+        guard let desktop = mostSpecificFirst.lazy.compactMap({ ($0 as? [String: Any])?["Desktop"] as? [String: Any] }).first
+        else { return nil }
+        return imageURL(of: desktop)
+    }
+
+    /// Every image file the store shows, on any display or Space.
+    public static func imageURLs(in data: Data) -> [URL] {
+        guard let root = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        else { return [] }
+        func children(_ value: Any?) -> [Any] { (value as? [String: Any]).map { Array($0.values) } ?? [] }
+        let spaces = children(root["Spaces"]).compactMap { $0 as? [String: Any] }
+        let entries = [root["AllSpacesAndDisplays"] as Any]
+            + children(root["Displays"])
+            + spaces.map { $0["Default"] as Any }
+            + spaces.flatMap { children($0["Displays"]) }
+        return entries.compactMap { (($0 as? [String: Any])?["Desktop"] as? [String: Any]).flatMap(imageURL(of:)) }
+    }
+
+    private static func imageURL(of desktop: [String: Any]) -> URL? {
+        guard let choice = ((desktop["Content"] as? [String: Any])?["Choices"] as? [[String: Any]])?.first,
               choice["Provider"] as? String == "com.apple.wallpaper.choice.image",
               let blob = choice["Configuration"] as? Data,
               let configuration = try? PropertyListSerialization.propertyList(from: blob, format: nil) as? [String: Any],

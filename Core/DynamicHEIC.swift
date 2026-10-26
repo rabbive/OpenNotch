@@ -61,13 +61,15 @@ public enum DynamicHEIC {
         _ = try FileManager.default.replaceItemAt(destination, withItemAt: partial)
     }
 
+    /// macOS switches frames only when one carries a schedule. A GIF or multi-page TIFF shows as a still.
+    public static func hasSchedule(_ source: CGImageSource) -> Bool {
+        (0..<CGImageSourceGetCount(source)).contains { !appleDesktopTagList(of: source, at: $0).isEmpty }
+    }
+
     /// Only the apple_desktop tags carry over. Size and orientation tags describe the source pixels,
     /// not the render.
     static func appleDesktopTags(of source: CGImageSource, at index: Int) throws -> CGMutableImageMetadata? {
-        guard let metadata = CGImageSourceCopyMetadataAtIndex(source, index, nil),
-              let tags = CGImageMetadataCopyTags(metadata) as? [CGImageMetadataTag]
-        else { return nil }
-        let kept = tags.filter { CGImageMetadataTagCopyNamespace($0) as String? == appleDesktop }
+        let kept = appleDesktopTagList(of: source, at: index)
         guard !kept.isEmpty else { return nil }
         let result = CGImageMetadataCreateMutable()
         guard CGImageMetadataRegisterNamespaceForPrefix(result, appleDesktop as CFString, "apple_desktop" as CFString, nil),
@@ -77,6 +79,13 @@ public enum DynamicHEIC {
               })
         else { throw RenderError(description: "Can't keep the wallpaper's time-of-day schedule") }
         return result
+    }
+
+    static func appleDesktopTagList(of source: CGImageSource, at index: Int) -> [CGImageMetadataTag] {
+        guard let metadata = CGImageSourceCopyMetadataAtIndex(source, index, nil),
+              let tags = CGImageMetadataCopyTags(metadata) as? [CGImageMetadataTag]
+        else { return [] }
+        return tags.filter { CGImageMetadataTagCopyNamespace($0) as String? == appleDesktop }
     }
 }
 

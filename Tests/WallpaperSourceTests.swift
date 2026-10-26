@@ -30,13 +30,20 @@ struct WallpaperSourceTests {
         #expect(WallpaperSource.resolve(current: still, display: "D", space: nil, indexPlist: nil) == .image(still))
     }
 
-    @Test func aMultiImageFileIsDynamic() throws {
-        let heicLike = folder.appending(path: "dynamic.tiff")
-        let destination = try #require(CGImageDestinationCreateWithURL(heicLike as CFURL, UTType.tiff.identifier as CFString, 2, nil))
+    @Test func aMultiImageFileWithoutAScheduleIsAStill() throws {
+        let pages = folder.appending(path: "pages.tiff")
+        let destination = try #require(CGImageDestinationCreateWithURL(pages as CFURL, UTType.tiff.identifier as CFString, 2, nil))
         CGImageDestinationAddImage(destination, TestImages.quadrants(), nil)
         CGImageDestinationAddImage(destination, TestImages.quadrants(), nil)
         #expect(CGImageDestinationFinalize(destination))
-        #expect(WallpaperSource.resolve(current: heicLike, display: "D", space: nil, indexPlist: nil) == .dynamic(heicLike))
+        #expect(WallpaperSource.resolve(current: pages, display: "D", space: nil, indexPlist: nil) == .image(pages))
+    }
+
+    @Test(.enabled(if: DynamicFixture.canEncode, "This runner can't encode HEIC, so there is no dynamic wallpaper to test with"))
+    func aMultiImageFileWithAScheduleIsDynamic() throws {
+        let dynamic = folder.appending(path: "dynamic.heic")
+        try #require(DynamicFixture.heic(DynamicFixture.colors.map { DynamicFixture.solid($0) }, tags: DynamicFixture.tags)).write(to: dynamic)
+        #expect(WallpaperSource.resolve(current: dynamic, display: "D", space: nil, indexPlist: nil) == .dynamic(dynamic))
     }
 
     @Test func aNonImageFallsBackToTheWallpaperStore() {
@@ -73,6 +80,10 @@ struct IndexPlistTests {
         #expect(IndexPlist.imageURL(in: store, display: "D", space: "") == spaceDefault)
         #expect(IndexPlist.imageURL(in: store, display: "D", space: "unknown") == display)
         #expect(IndexPlist.imageURL(in: store, display: "other", space: nil) == everywhere)
+    }
+
+    @Test func everyShownImageIsListed() {
+        #expect(Set(IndexPlist.imageURLs(in: store)) == [display, space, spaceDefault, everywhere])
     }
 
     @Test func unrecognisedDataYieldsNothing() {

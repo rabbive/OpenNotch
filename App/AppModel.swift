@@ -10,7 +10,7 @@ final class AppModel {
     private(set) var isEnabled: Bool
     private(set) var builtinOnly: Bool
     private(set) var corners: CornerStyle
-    private(set) var launchAtLogin = SMAppService.mainApp.status == .enabled
+    private(set) var launchAtLogin = AppModel.launchesAtLogin
     private(set) var startupError: String?
     /// Never saved, so a relaunch always shows the icon and the user can't lock themselves out.
     var isIconVisible = true
@@ -36,7 +36,9 @@ final class AppModel {
         builtinOnly = defaults.object(forKey: Key.builtinOnly) as? Bool ?? true
         corners = defaults.string(forKey: Key.corners).flatMap(CornerStyle.init(rawValue:)) ?? .off
         do {
-            engine = NotchEngine(system: LiveDesktop(), store: try Store(directory: Store.defaultDirectory))
+            let desktop = LiveDesktop()
+            let store = try Store(directory: Store.defaultDirectory) { desktop.indexPlist().map { IndexPlist.imageURLs(in: $0) } ?? [] }
+            engine = NotchEngine(system: desktop, store: store)
         } catch {
             engine = nil
             startupError = "Can't read saved state: \(error.localizedDescription)"
@@ -69,7 +71,13 @@ final class AppModel {
         } catch {
             NSLog("OpenNotch: launch at login change failed: \(error)")
         }
-        launchAtLogin = SMAppService.mainApp.status == .enabled
+        // macOS can hold a new login item until the user allows it in System Settings.
+        if on && SMAppService.mainApp.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
+        launchAtLogin = Self.launchesAtLogin
+    }
+
+    nonisolated private static var launchesAtLogin: Bool {
+        [.enabled, .requiresApproval].contains(SMAppService.mainApp.status)
     }
 
     /// Space switches, display changes and wallpaper store writes arrive in bursts; one sync per burst.
