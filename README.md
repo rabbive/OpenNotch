@@ -37,6 +37,15 @@ open build/OpenNotch.app
 
 OpenNotch runs from the menu bar and has no Dock icon. Choose **Black Menu Bar** to turn it on.
 
+### Try a CI build without building
+
+Every CI run on macOS 27 uploads the app as an artifact named `OpenNotch-<commit>`. Download it from the run's **Summary** page, unzip it, and move `OpenNotch.app` to Applications. The build is ad-hoc signed, not notarized, so macOS blocks the first launch. Clear the download flag once:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/OpenNotch.app
+open /Applications/OpenNotch.app
+```
+
 To update the golden images after an intended rendering change, run `RECORD_GOLDENS=1 swift test` and review the changed PNGs in `Tests/Goldens`.
 
 ## Layout

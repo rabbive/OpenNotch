@@ -6,18 +6,18 @@ struct MenuContent: View {
     let model: AppModel
 
     var body: some View {
-        Toggle("Black Menu Bar", isOn: Binding(get: { model.isEnabled }, set: model.setEnabled))
+        Toggle("Black Menu Bar", isOn: Binding(get: { model.isEnabled }, set: { model.setEnabled($0) }))
         Text(model.status.summary)
         if !model.spacesToVisit.isEmpty {
             Text("Visit to restore: \(model.spacesToVisit.formatted(.list(type: .and)))")
         }
         Divider()
-        Picker("Rounded Corners", selection: Binding(get: { model.corners }, set: model.setCorners)) {
+        Picker("Rounded Corners", selection: Binding(get: { model.corners }, set: { model.setCorners($0) })) {
             ForEach(CornerStyle.allCases, id: \.self) { style in
                 Text(style.title).tag(style)
             }
         }
-        Toggle("Launch at Login", isOn: Binding(get: { model.launchAtLogin }, set: model.setLaunchAtLogin))
+        Toggle("Launch at Login", isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) }))
         Divider()
         Button("Quit OpenNotch") { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")
