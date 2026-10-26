@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version && xcodebuild -version
+      - name: Test
+        run: swift test
+      - name: Build with xcodebuild
+        run: xcodebuild -scheme OpenNotch -destination 'platform=macOS,arch=arm64' build
+      - name: Bundle the app
+        run: Scripts/build-app.sh
