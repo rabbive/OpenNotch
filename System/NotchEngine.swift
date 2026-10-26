@@ -4,21 +4,31 @@ import OpenNotchCore
 public enum NotchStatus: Equatable, Sendable {
     case off
     case applied
-    case noBuiltinDisplay
     case fullScreenSpace
-    case dynamicWallpaper
     case unsupportedWallpaper
     case failed(String)
 }
 
-/// Brings the built-in display's current Space in line with the settings. Every trigger calls
+public struct DisplayStatus: Equatable, Sendable {
+    public let name: String
+    public let status: NotchStatus
+
+    public init(name: String, status: NotchStatus) {
+        self.name = name
+        self.status = status
+    }
+}
+
+/// Brings the current Space of every display in line with the settings. Every trigger calls
 /// `sync`, and calling it again with nothing changed sets nothing.
 @MainActor
 public final class NotchEngine {
     private let system: DesktopSystem
     private let store: Store
 
-    public private(set) var status: NotchStatus = .off
+    /// The displays OpenNotch is on for, built-in first, plus any display it failed to restore.
+    /// Empty when it is off or no display qualifies.
+    public private(set) var statuses: [DisplayStatus] = []
     /// Spaces still showing a render while OpenNotch is off. macOS only lets an app set the wallpaper
     /// of the Space on screen, so each one is restored on the user's next visit.
     public private(set) var spacesToVisit: [String] = []
@@ -28,19 +38,29 @@ public final class NotchEngine {
         self.store = store
     }
 
-    public func sync(enabled: Bool, corners: CornerStyle) {
-        let display = system.builtinDisplay()
-        let spaces = display.flatMap { system.spaces(display: $0.uuid) }
-        do {
-            status = try reconcile(display: display, spaces: spaces, enabled: enabled, corners: corners)
-        } catch {
-            status = .failed(String(describing: error))
+    /// With `builtinOnly`, external displays are treated as off, so any OpenNotch changed get restored.
+    public func sync(enabled: Bool, builtinOnly: Bool = true, corners: CornerStyle) {
+        let displays = system.displays()
+        var statuses: [DisplayStatus] = []
+        var spacesToVisit: [String] = []
+        for display in displays {
+            let on = enabled && (display.isBuiltin || !builtinOnly)
+            let spaces = system.spaces(display: display.uuid)
+            let status: NotchStatus
+            do {
+                status = try reconcile(display: display, spaces: spaces, enabled: on, corners: corners)
+            } catch {
+                status = .failed(String(describing: error))
+            }
+            if on || status != .off { statuses.append(DisplayStatus(name: display.name, status: status)) }
+            if !on { spacesToVisit += labelsOfSpacesToVisit(display: display, spaces: spaces) }
         }
-        spacesToVisit = enabled ? [] : labelsOfSpacesToVisit(display: display, spaces: spaces)
+        if !enabled { spacesToVisit += labelsOfDisconnectedDisplays(connected: displays) }
+        self.statuses = statuses
+        self.spacesToVisit = spacesToVisit
     }
 
-    private func reconcile(display: DisplaySnapshot?, spaces: DisplaySpaces?, enabled: Bool, corners: CornerStyle) throws -> NotchStatus {
-        guard let display else { return .noBuiltinDisplay }
+    private func reconcile(display: DisplaySnapshot, spaces: DisplaySpaces?, enabled: Bool, corners: CornerStyle) throws -> NotchStatus {
         if let spaces {
             let live = Set(spaces.all.map(\.uuid))
             try store.forget(store.applied.keys.filter { $0.display == display.uuid && $0.space.map { !live.contains($0) } ?? false })
@@ -69,12 +89,12 @@ public final class NotchEngine {
         }
 
         let source: URL
+        let isDynamic: Bool
         switch WallpaperSource.resolve(current: original.url, display: display.uuid, space: key.space, indexPlist: system.indexPlist()) {
         case .image(let url):
-            source = url
-        case .dynamic:
-            if !showingRender { try store.forget([key]) }
-            return .dynamicWallpaper
+            (source, isDynamic) = (url, false)
+        case .dynamic(let url):
+            (source, isDynamic) = (url, true)
         case .unsupported:
             if !showingRender { try store.forget([key]) }
             return .unsupportedWallpaper
@@ -88,16 +108,27 @@ public final class NotchEngine {
             geometry: display.geometry,
             corners: corners
         )
-        let rendered = store.rendersDirectory.appending(path: "\(renderKey.digest).png")
+        let rendered = store.rendersDirectory.appending(path: "\(renderKey.digest).\(isDynamic ? "heic" : "png")")
         if !FileManager.default.fileExists(atPath: rendered.path) {
-            let image = try WallpaperRenderer.render(
-                WallpaperRenderer.load(source),
-                geometry: display.geometry,
-                placement: renderKey.placement,
-                background: renderKey.background,
-                corners: corners
-            )
-            try WallpaperRenderer.writePNG(image, to: rendered)
+            if isDynamic {
+                try DynamicHEIC.render(
+                    source,
+                    to: rendered,
+                    geometry: display.geometry,
+                    placement: renderKey.placement,
+                    background: renderKey.background,
+                    corners: corners
+                )
+            } else {
+                let image = try WallpaperRenderer.render(
+                    WallpaperRenderer.load(source),
+                    geometry: display.geometry,
+                    placement: renderKey.placement,
+                    background: renderKey.background,
+                    corners: corners
+                )
+                try WallpaperRenderer.writePNG(image, to: rendered)
+            }
         }
         if current.url?.path != rendered.path {
             try system.setWallpaper(rendered, options: original.options, display: display.uuid)
@@ -106,14 +137,25 @@ public final class NotchEngine {
         return .applied
     }
 
-    private func labelsOfSpacesToVisit(display: DisplaySnapshot?, spaces: DisplaySpaces?) -> [String] {
-        guard let display else { return [] }
+    /// Built-in Spaces keep their v0.1 labels; the others name their display.
+    private func labelsOfSpacesToVisit(display: DisplaySnapshot, spaces: DisplaySpaces?) -> [String] {
         let numbers = Dictionary((spaces?.all ?? []).map { ($0.uuid, $0.number) }, uniquingKeysWith: { first, _ in first })
+        let suffix = display.isBuiltin ? "" : " on \(display.name)"
         return store.applied.keys
             .filter { $0.display == display.uuid && $0.space != spaces?.current.uuid }
             .map { key in key.space.flatMap { numbers[$0] ?? nil } }
             .sorted { ($0 ?? .max) < ($1 ?? .max) }
-            .map { number in number.map { "Desktop \($0)" } ?? "Built-in display" }
+            .map { number in number.map { "Desktop \($0)\(suffix)" } ?? (display.isBuiltin ? "Built-in display" : display.name) }
+    }
+
+    /// Records outlive a disconnected display, so reconnecting it while off restores it.
+    private func labelsOfDisconnectedDisplays(connected: [DisplaySnapshot]) -> [String] {
+        let count = Set(store.applied.keys.map(\.display)).subtracting(connected.map(\.uuid)).count
+        switch count {
+        case 0: return []
+        case 1: return ["a disconnected display"]
+        default: return ["\(count) disconnected displays"]
+        }
     }
 
     static func stamp(_ url: URL) throws -> String {

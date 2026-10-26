@@ -1,21 +1,41 @@
 import AppKit
+import ImageIO
 import OpenNotchCore
 import OpenNotchSystem
 import Testing
 
-@MainActor
-final class FakeDesktop: DesktopSystem {
-    var display: DisplaySnapshot? = DisplaySnapshot(
+enum Displays {
+    static let builtin = DisplaySnapshot(
         uuid: "BUILTIN",
+        name: "Built-in Display",
+        isBuiltin: true,
         geometry: BarGeometry(pixelWidth: 64, pixelHeight: 40, bandHeight: 6, scale: 2)
     )
+    static let external = DisplaySnapshot(
+        uuid: "EXTERNAL",
+        name: "Studio Display",
+        isBuiltin: false,
+        geometry: BarGeometry(pixelWidth: 48, pixelHeight: 30, bandHeight: 3, scale: 1)
+    )
+}
+
+/// Every display shares the same Spaces and current Space; wallpapers are per display and Space.
+@MainActor
+final class FakeDesktop: DesktopSystem {
+    var connected = [Displays.builtin]
     var spaceIDs = ["", "S2", "S3"]
     var fullScreen: Set<String> = []
     var currentSpace = ""
-    var wallpapers: [String: (url: URL?, options: DesktopOptions)] = [:]
+    var failsToSet = false
+    private var wallpapers: [SpaceKey: (url: URL?, options: DesktopOptions)] = [:]
     private(set) var setCount = 0
 
-    func builtinDisplay() -> DisplaySnapshot? { display }
+    subscript(space: String, on display: String = "BUILTIN") -> (url: URL?, options: DesktopOptions)? {
+        get { wallpapers[SpaceKey(display: display, space: space)] }
+        set { wallpapers[SpaceKey(display: display, space: space)] = newValue }
+    }
+
+    func displays() -> [DisplaySnapshot] { connected }
 
     func spaces(display: String) -> DisplaySpaces? {
         var desktops = 0
@@ -28,11 +48,12 @@ final class FakeDesktop: DesktopSystem {
     }
 
     func wallpaper(display: String) -> (url: URL?, options: DesktopOptions) {
-        wallpapers[currentSpace] ?? (nil, DesktopOptions())
+        self[currentSpace, on: display] ?? (nil, DesktopOptions())
     }
 
     func setWallpaper(_ url: URL, options: DesktopOptions, display: String) throws {
-        wallpapers[currentSpace] = (url, options)
+        if failsToSet { throw RenderError(description: "Set refused") }
+        self[currentSpace, on: display] = (url, options)
         setCount += 1
     }
 
@@ -54,7 +75,9 @@ struct NotchEngineTests {
         otherPhoto = folder.appending(path: "other.png")
         try WallpaperRenderer.writePNG(TestImages.quadrants(), to: photo)
         try WallpaperRenderer.writePNG(TestImages.quadrants(width: 30, height: 30), to: otherPhoto)
-        for space in desktop.spaceIDs { desktop.wallpapers[space] = (photo, options) }
+        for display in [Displays.builtin, Displays.external] {
+            for space in desktop.spaceIDs { desktop[space, on: display.uuid] = (photo, options) }
+        }
     }
 
     func makeEngine() throws -> (NotchEngine, Store) {
@@ -66,18 +89,22 @@ struct NotchEngineTests {
         try FileManager.default.contentsOfDirectory(atPath: folder.appending(path: "State/Renders").path)
     }
 
-    func visit(_ space: String, _ engine: NotchEngine, enabled: Bool) {
+    func visit(_ space: String, _ engine: NotchEngine, enabled: Bool, builtinOnly: Bool = true) {
         desktop.currentSpace = space
-        engine.sync(enabled: enabled, corners: .off)
+        engine.sync(enabled: enabled, builtinOnly: builtinOnly, corners: .off)
+    }
+
+    func statuses(_ status: NotchStatus, _ displays: DisplaySnapshot...) -> [DisplayStatus] {
+        displays.map { DisplayStatus(name: $0.name, status: status) }
     }
 
     @Test func turningOnShowsABandedRenderWithTheOriginalOptions() throws {
         let (engine, store) = try makeEngine()
         engine.sync(enabled: true, corners: .off)
-        #expect(engine.status == .applied)
-        let shown = try #require(desktop.wallpapers[""]?.url)
+        #expect(engine.statuses == statuses(.applied, Displays.builtin))
+        let shown = try #require(desktop[""]?.url)
         #expect(store.isRender(shown))
-        #expect(desktop.wallpapers[""]?.options == options)
+        #expect(desktop[""]?.options == options)
         let pixels = TestImages.Pixels(try WallpaperRenderer.load(shown))
         #expect(pixels.width == 64 && pixels.height == 40)
         #expect(pixels[0, 0] == [0, 0, 0] && pixels[63, 5] == [0, 0, 0])
@@ -95,8 +122,8 @@ struct NotchEngineTests {
         let (engine, _) = try makeEngine()
         for space in ["", "S2", "S3", ""] { visit(space, engine, enabled: true) }
         engine.sync(enabled: false, corners: .off)
-        #expect(desktop.wallpapers[""]?.url == photo)
-        #expect(desktop.wallpapers[""]?.options == options)
+        #expect(desktop[""]?.url == photo)
+        #expect(desktop[""]?.options == options)
         #expect(engine.spacesToVisit == ["Desktop 2", "Desktop 3"])
     }
 
@@ -105,10 +132,10 @@ struct NotchEngineTests {
         for space in ["", "S2", "S3", ""] { visit(space, engine, enabled: true) }
         engine.sync(enabled: false, corners: .off)
         visit("S2", engine, enabled: false)
-        #expect(desktop.wallpapers["S2"]?.url == photo)
+        #expect(desktop["S2"]?.url == photo)
         #expect(engine.spacesToVisit == ["Desktop 3"])
         visit("S3", engine, enabled: false)
-        #expect(desktop.wallpapers["S3"]?.url == photo)
+        #expect(desktop["S3"]?.url == photo)
         #expect(engine.spacesToVisit.isEmpty)
         #expect(try renders().isEmpty)
     }
@@ -117,29 +144,29 @@ struct NotchEngineTests {
         try makeEngine().0.sync(enabled: true, corners: .off)
         let (relaunched, _) = try makeEngine()
         relaunched.sync(enabled: false, corners: .off)
-        #expect(desktop.wallpapers[""]?.url == photo)
-        #expect(desktop.wallpapers[""]?.options == options)
+        #expect(desktop[""]?.url == photo)
+        #expect(desktop[""]?.options == options)
     }
 
     @Test func aNewWallpaperBecomesTheOneToRestore() throws {
         let (engine, _) = try makeEngine()
         engine.sync(enabled: true, corners: .off)
-        desktop.wallpapers[""] = (otherPhoto, options)
+        desktop[""] = (otherPhoto, options)
         engine.sync(enabled: true, corners: .off)
         #expect(desktop.setCount == 2)
         #expect(try renders().count == 1)
         engine.sync(enabled: false, corners: .off)
-        #expect(desktop.wallpapers[""]?.url == otherPhoto)
+        #expect(desktop[""]?.url == otherPhoto)
     }
 
     @Test func aWallpaperChangedWhileAwayIsKept() throws {
         let (engine, _) = try makeEngine()
         for space in ["S2", ""] { visit(space, engine, enabled: true) }
         engine.sync(enabled: false, corners: .off)
-        desktop.wallpapers["S2"] = (otherPhoto, options)
+        desktop["S2"] = (otherPhoto, options)
         let sets = desktop.setCount
         visit("S2", engine, enabled: false)
-        #expect(desktop.wallpapers["S2"]?.url == otherPhoto)
+        #expect(desktop["S2"]?.url == otherPhoto)
         #expect(desktop.setCount == sets)
         #expect(engine.spacesToVisit.isEmpty)
     }
@@ -156,16 +183,35 @@ struct NotchEngineTests {
         let (engine, _) = try makeEngine()
         desktop.fullScreen = ["S2"]
         visit("S2", engine, enabled: true)
-        #expect(engine.status == .fullScreenSpace)
+        #expect(engine.statuses == statuses(.fullScreenSpace, Displays.builtin))
         #expect(desktop.setCount == 0)
     }
 
     @Test func unsupportedWallpapersAreLeftAlone() throws {
         let (engine, _) = try makeEngine()
-        desktop.wallpapers[""] = (folder, options)
+        desktop[""] = (folder, options)
         engine.sync(enabled: true, corners: .off)
-        #expect(engine.status == .unsupportedWallpaper)
+        #expect(engine.statuses == statuses(.unsupportedWallpaper, Displays.builtin))
         #expect(desktop.setCount == 0)
+    }
+
+    @Test(.enabled(if: DynamicFixture.canEncode, "This runner can't encode HEIC, so there is no dynamic wallpaper to test with"))
+    func dynamicWallpapersKeepEveryFrameAndTheirSchedule() throws {
+        let dynamic = folder.appending(path: "dynamic.heic")
+        try #require(DynamicFixture.heic(DynamicFixture.colors.map { DynamicFixture.solid($0) }, tags: DynamicFixture.tags)).write(to: dynamic)
+        desktop[""] = (dynamic, options)
+        let (engine, store) = try makeEngine()
+        engine.sync(enabled: true, corners: .off)
+        #expect(engine.statuses == statuses(.applied, Displays.builtin))
+        let shown = try #require(desktop[""]?.url)
+        #expect(store.isRender(shown))
+        let frames = try #require(CGImageSourceCreateWithURL(shown as CFURL, nil))
+        #expect(CGImageSourceGetCount(frames) == DynamicFixture.colors.count)
+        #expect(DynamicFixture.appleDesktopTags(of: frames, at: 0) == DynamicFixture.tags)
+        engine.sync(enabled: false, corners: .off)
+        #expect(desktop[""]?.url == dynamic)
+        #expect(desktop[""]?.options == options)
+        #expect(try renders().isEmpty)
     }
 
     @Test func removedSpacesDropOffTheList() throws {
@@ -180,9 +226,107 @@ struct NotchEngineTests {
 
     @Test func noBuiltinDisplayMeansNothingToDo() throws {
         let (engine, _) = try makeEngine()
-        desktop.display = nil
+        desktop.connected = [Displays.external]
         engine.sync(enabled: true, corners: .off)
-        #expect(engine.status == .noBuiltinDisplay)
+        #expect(engine.statuses.isEmpty)
         #expect(desktop.setCount == 0)
+    }
+
+    @Test func macBookScreenOnlyLeavesExternalDisplaysAlone() throws {
+        let (engine, _) = try makeEngine()
+        desktop.connected = [Displays.builtin, Displays.external]
+        engine.sync(enabled: true, corners: .off)
+        #expect(engine.statuses == statuses(.applied, Displays.builtin))
+        #expect(desktop["", on: "EXTERNAL"]?.url == photo)
+        #expect(desktop.setCount == 1)
+    }
+
+    @Test func everyDisplayGetsABandOfItsOwnSize() throws {
+        let (engine, store) = try makeEngine()
+        desktop.connected = [Displays.builtin, Displays.external]
+        engine.sync(enabled: true, builtinOnly: false, corners: .off)
+        #expect(engine.statuses == statuses(.applied, Displays.builtin, Displays.external))
+
+        let builtin = TestImages.Pixels(try WallpaperRenderer.load(try #require(desktop[""]?.url)))
+        #expect(builtin.width == 64 && builtin.height == 40)
+        #expect(builtin[0, 5] == [0, 0, 0] && builtin[10, 6] != [0, 0, 0])
+
+        let shown = try #require(desktop["", on: "EXTERNAL"]?.url)
+        #expect(store.isRender(shown))
+        #expect(desktop["", on: "EXTERNAL"]?.options == options)
+        let external = TestImages.Pixels(try WallpaperRenderer.load(shown))
+        #expect(external.width == 48 && external.height == 30)
+        #expect(external[0, 2] == [0, 0, 0] && external[10, 3] != [0, 0, 0])
+
+        engine.sync(enabled: true, builtinOnly: false, corners: .off)
+        #expect(desktop.setCount == 2)
+    }
+
+    @Test func turningOffRestoresEveryDisplay() throws {
+        let (engine, _) = try makeEngine()
+        desktop.connected = [Displays.builtin, Displays.external]
+        for space in ["", "S2", ""] { visit(space, engine, enabled: true, builtinOnly: false) }
+        visit("", engine, enabled: false, builtinOnly: false)
+        for display in ["BUILTIN", "EXTERNAL"] {
+            #expect(desktop["", on: display]?.url == photo)
+            #expect(desktop["", on: display]?.options == options)
+        }
+        #expect(engine.spacesToVisit == ["Desktop 2", "Desktop 2 on Studio Display"])
+        visit("S2", engine, enabled: false, builtinOnly: false)
+        #expect(desktop["S2", on: "EXTERNAL"]?.url == photo)
+        #expect(engine.spacesToVisit.isEmpty)
+        #expect(try renders().isEmpty)
+    }
+
+    @Test func turningOnMacBookScreenOnlyRestoresExternalDisplays() throws {
+        let (engine, _) = try makeEngine()
+        desktop.connected = [Displays.builtin, Displays.external]
+        engine.sync(enabled: true, builtinOnly: false, corners: .off)
+        #expect(try renders().count == 2)
+        engine.sync(enabled: true, builtinOnly: true, corners: .off)
+        #expect(desktop["", on: "EXTERNAL"]?.url == photo)
+        #expect(desktop["", on: "EXTERNAL"]?.options == options)
+        #expect(desktop[""]?.url != photo)
+        #expect(engine.statuses == statuses(.applied, Displays.builtin))
+        #expect(try renders().count == 1)
+    }
+
+    @Test func aDisplayDisconnectedWhileOnIsRestoredWhenItReturns() throws {
+        let (engine, _) = try makeEngine()
+        desktop.connected = [Displays.builtin, Displays.external]
+        engine.sync(enabled: true, builtinOnly: false, corners: .off)
+        desktop.connected = [Displays.builtin]
+        engine.sync(enabled: false, builtinOnly: false, corners: .off)
+        #expect(engine.spacesToVisit == ["a disconnected display"])
+        desktop.connected = [Displays.builtin, Displays.external]
+        engine.sync(enabled: false, builtinOnly: false, corners: .off)
+        #expect(desktop["", on: "EXTERNAL"]?.url == photo)
+        #expect(engine.spacesToVisit.isEmpty)
+    }
+
+    @Test func strayRendersAreDeletedAndTheShownOneKept() throws {
+        let (engine, _) = try makeEngine()
+        engine.sync(enabled: true, corners: .off)
+        let shown = try #require(desktop[""]?.url)
+        let rendersFolder = folder.appending(path: "State/Renders")
+        for stray in ["v0-0123456789ab.png", "\(shown.lastPathComponent).partial"] {
+            try Data("stray".utf8).write(to: rendersFolder.appending(path: stray))
+        }
+        let (relaunched, _) = try makeEngine()
+        #expect(try renders() == [shown.lastPathComponent])
+        relaunched.sync(enabled: true, corners: .off)
+        #expect(desktop.setCount == 1)
+    }
+
+    @Test func aRenderLeftByAFailedSetIsDeleted() throws {
+        let (engine, _) = try makeEngine()
+        desktop.failsToSet = true
+        engine.sync(enabled: true, corners: .off)
+        #expect(engine.statuses.count == 1 && engine.statuses[0].status != .applied)
+        #expect(try renders().count == 1)
+        desktop.failsToSet = false
+        engine.sync(enabled: true, corners: .high)
+        let shown = try #require(desktop[""]?.url)
+        #expect(try renders() == [shown.lastPathComponent])
     }
 }

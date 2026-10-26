@@ -27,7 +27,8 @@ public struct AppliedWallpaper: Codable, Equatable, Sendable {
 }
 
 /// Every replaced wallpaper, saved as JSON after each change so a revert still works after a relaunch,
-/// plus the renders themselves. A render is deleted once no Space refers to it.
+/// plus the renders themselves. The render folder holds only files a record points to, so its size
+/// is bounded by the Spaces OpenNotch changed, and a returning Space finds its render still there.
 @MainActor
 public final class Store {
     public let directory: URL
@@ -44,9 +45,11 @@ public final class Store {
     public init(directory: URL) throws {
         self.directory = directory
         try FileManager.default.createDirectory(at: rendersDirectory, withIntermediateDirectories: true)
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
-        let list = try JSONDecoder().decode([AppliedWallpaper].self, from: Data(contentsOf: fileURL))
-        applied = Dictionary(list.map { ($0.key, $0) }, uniquingKeysWith: { $1 })
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            let list = try JSONDecoder().decode([AppliedWallpaper].self, from: Data(contentsOf: fileURL))
+            applied = Dictionary(list.map { ($0.key, $0) }, uniquingKeysWith: { $1 })
+        }
+        removeUnreferencedRenders()
     }
 
     public func isRender(_ url: URL) -> Bool {
@@ -55,16 +58,16 @@ public final class Store {
 
     public func record(_ wallpaper: AppliedWallpaper) throws {
         guard applied[wallpaper.key] != wallpaper else { return }
-        let replaced = applied.updateValue(wallpaper, forKey: wallpaper.key)
+        applied[wallpaper.key] = wallpaper
         try save()
-        if let replaced { deleteIfUnreferenced(replaced.renderedURL) }
+        removeUnreferencedRenders()
     }
 
     public func forget(_ keys: some Sequence<SpaceKey>) throws {
         let removed = keys.compactMap { applied.removeValue(forKey: $0) }
         guard !removed.isEmpty else { return }
         try save()
-        removed.forEach { deleteIfUnreferenced($0.renderedURL) }
+        removeUnreferencedRenders()
     }
 
     private func save() throws {
@@ -73,8 +76,13 @@ public final class Store {
         try encoder.encode(Array(applied.values)).write(to: fileURL, options: .atomic)
     }
 
-    private func deleteIfUnreferenced(_ render: URL) {
-        guard !applied.values.contains(where: { $0.renderedURL == render }) else { return }
-        try? FileManager.default.removeItem(at: render)
+    /// Sweeps the whole folder, so renders left by a crash or a failed set, half-written files,
+    /// and renders from an older renderer version go too.
+    private func removeUnreferencedRenders() {
+        let referenced = Set(applied.values.map(\.renderedURL.lastPathComponent))
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: rendersDirectory.path) else { return }
+        for name in names where !referenced.contains(name) {
+            try? FileManager.default.removeItem(at: rendersDirectory.appending(path: name))
+        }
     }
 }

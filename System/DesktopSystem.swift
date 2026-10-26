@@ -4,7 +4,7 @@ import OpenNotchCore
 /// The macOS surfaces the engine touches, behind one seam so tests drive it with a fake.
 @MainActor
 public protocol DesktopSystem {
-    func builtinDisplay() -> DisplaySnapshot?
+    func displays() -> [DisplaySnapshot]
     func spaces(display: String) -> DisplaySpaces?
     func wallpaper(display: String) -> (url: URL?, options: DesktopOptions)
     func setWallpaper(_ url: URL, options: DesktopOptions, display: String) throws
@@ -15,7 +15,7 @@ public protocol DesktopSystem {
 public struct LiveDesktop: DesktopSystem {
     public init() {}
 
-    public func builtinDisplay() -> DisplaySnapshot? { DisplayTracker.builtin()?.1 }
+    public func displays() -> [DisplaySnapshot] { DisplayTracker.displays() }
 
     public func spaces(display: String) -> DisplaySpaces? { SpaceTracker.spaces(display: display) }
 

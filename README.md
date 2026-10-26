@@ -4,23 +4,25 @@ OpenNotch hides the notch on a MacBook display by painting the menu bar area of 
 
 ## How it works
 
-OpenNotch reads your wallpaper's image file, draws it at the display's exact pixel size, paints a black band the height of the menu bar across the top, and sets the result as the wallpaper for the current Space. It keeps the original file and placement options so it can put them back.
+OpenNotch reads your wallpaper's image file, draws it at the display's exact pixel size, paints a black band the height of the menu bar across the top, and sets the result as the wallpaper for the current Space. Each display gets a band of its own menu bar height. It keeps the original file and placement options so it can put them back.
 
 - It never captures the screen, so it needs no Screen Recording, Accessibility, or other privacy permission.
 - macOS only lets an app change the wallpaper of the Space on screen. OpenNotch re-renders when you switch Spaces, change displays, wake the Mac, or change the wallpaper.
-- Renders are cached by their inputs, so returning to a Space sets the same file again.
-- When you turn it off, OpenNotch restores the current Space at once and lists the other Spaces it changed. Visit each one to restore it. This also works after a relaunch.
+- Renders are cached by their inputs, so returning to a Space sets the same file again. OpenNotch deletes any render no Space uses, so its render folder holds only the wallpapers on show.
+- When you turn it off, OpenNotch restores the current Space on every display at once and lists the other Spaces it changed. Visit each one to restore it. A display that was disconnected is restored when you connect it again. This also works after a relaunch.
 
 ## Status
 
-Version 0.1 supports:
+OpenNotch supports:
 
-- The built-in display only.
+- The built-in display, and external displays when you turn off **MacBook Screen Only** (on by default).
 - Still images (JPEG, PNG, HEIC, and other single-image files) with Fill, Fit, Stretch, or Center placement.
+- Dynamic (time-of-day and light/dark) HEIC wallpapers. Every frame gets the band, and the schedule is kept.
 - Optional rounded top corners (small, medium, high).
 - Launch at login.
+- **Hide Menu Bar Icon**. OpenNotch keeps running. Open the app again to show the icon; it also comes back on every launch.
 
-Not yet supported: external displays, dynamic (time-of-day) wallpapers, Apple's built-in wallpaper collections, aerials, and Photos shuffles. OpenNotch says so in its menu and leaves those wallpapers alone.
+Not yet supported: Apple's built-in wallpaper collections, aerials, and Photos shuffles. OpenNotch says so in its menu and leaves those wallpapers alone.
 
 ## Requirements
 

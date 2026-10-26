@@ -3,28 +3,33 @@ import OpenNotchCore
 
 public struct DisplaySnapshot: Equatable, Sendable {
     public let uuid: String
+    public let name: String
+    public let isBuiltin: Bool
     public let geometry: BarGeometry
 
-    public init(uuid: String, geometry: BarGeometry) {
+    public init(uuid: String, name: String, isBuiltin: Bool, geometry: BarGeometry) {
         self.uuid = uuid
+        self.name = name
+        self.isBuiltin = isBuiltin
         self.geometry = geometry
     }
 }
 
 @MainActor
 public enum DisplayTracker {
-    public static func builtin() -> (NSScreen, DisplaySnapshot)? {
-        for screen in NSScreen.screens {
-            guard let id = displayID(of: screen), CGDisplayIsBuiltin(id) != 0, let uuid = uuid(of: id) else { continue }
+    /// Every connected display, the built-in one first. Each has its own menu bar height and pixel size.
+    public static func displays() -> [DisplaySnapshot] {
+        let all = NSScreen.screens.compactMap { screen -> DisplaySnapshot? in
+            guard let id = displayID(of: screen), let uuid = uuid(of: id) else { return nil }
             let geometry = BarGeometry(
                 frame: screen.frame,
                 visibleFrame: screen.visibleFrame,
                 safeAreaTop: screen.safeAreaInsets.top,
                 scale: screen.backingScaleFactor
             )
-            return (screen, DisplaySnapshot(uuid: uuid, geometry: geometry))
+            return DisplaySnapshot(uuid: uuid, name: screen.localizedName, isBuiltin: CGDisplayIsBuiltin(id) != 0, geometry: geometry)
         }
-        return nil
+        return all.filter(\.isBuiltin) + all.filter { !$0.isBuiltin }
     }
 
     static func displayID(of screen: NSScreen) -> CGDirectDisplayID? {

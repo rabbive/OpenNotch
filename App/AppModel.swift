@@ -8,10 +8,14 @@ import ServiceManagement
 @Observable
 final class AppModel {
     private(set) var isEnabled: Bool
+    private(set) var builtinOnly: Bool
     private(set) var corners: CornerStyle
     private(set) var launchAtLogin = SMAppService.mainApp.status == .enabled
-    private(set) var status: NotchStatus = .off
+    private(set) var statuses: [DisplayStatus] = []
     private(set) var spacesToVisit: [String] = []
+    private(set) var startupError: String?
+    /// Never saved, so a relaunch always shows the icon and the user can't lock themselves out.
+    var isIconVisible = true
 
     @ObservationIgnored private let engine: NotchEngine?
     @ObservationIgnored private let defaults = UserDefaults.standard
@@ -21,17 +25,19 @@ final class AppModel {
 
     private enum Key {
         static let enabled = "enabled"
+        static let builtinOnly = "builtinOnly"
         static let corners = "corners"
     }
 
     init() {
         isEnabled = defaults.bool(forKey: Key.enabled)
+        builtinOnly = defaults.object(forKey: Key.builtinOnly) as? Bool ?? true
         corners = defaults.string(forKey: Key.corners).flatMap(CornerStyle.init(rawValue:)) ?? .off
         do {
             engine = NotchEngine(system: LiveDesktop(), store: try Store(directory: Store.defaultDirectory))
         } catch {
             engine = nil
-            status = .failed("Can't read saved state: \(error.localizedDescription)")
+            startupError = "Can't read saved state: \(error.localizedDescription)"
         }
         observeTriggers()
         scheduleSync(after: .zero)
@@ -40,6 +46,12 @@ final class AppModel {
     func setEnabled(_ enabled: Bool) {
         isEnabled = enabled
         defaults.set(enabled, forKey: Key.enabled)
+        scheduleSync(after: .zero)
+    }
+
+    func setBuiltinOnly(_ on: Bool) {
+        builtinOnly = on
+        defaults.set(on, forKey: Key.builtinOnly)
         scheduleSync(after: .zero)
     }
 
@@ -64,8 +76,8 @@ final class AppModel {
         pendingSync = Task { [weak self] in
             try? await Task.sleep(for: delay)
             guard !Task.isCancelled, let self, let engine else { return }
-            engine.sync(enabled: isEnabled, corners: corners)
-            status = engine.status
+            engine.sync(enabled: isEnabled, builtinOnly: builtinOnly, corners: corners)
+            statuses = engine.statuses
             spacesToVisit = engine.spacesToVisit
         }
     }
@@ -83,6 +95,10 @@ final class AppModel {
             }
             observers.append((center, token))
         }
+        let reopened = NotificationCenter.default.addObserver(forName: AppDelegate.reopened, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.isIconVisible = true }
+        }
+        observers.append((NotificationCenter.default, reopened))
         watchWallpaperStore()
     }
 
