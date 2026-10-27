@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The OS OpenNotch is written for, with the Xcode that ships for it.
+          - name: macOS 27, Xcode 27
+            runner: xcode-27
+            upload-app: true
+          # The oldest toolchain the README promises to build with.
+          - name: macOS 15, Xcode 16
+            runner: macos-15
+            upload-app: false
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain
+        run: sw_vers && swift --version && xcodebuild -version
+      - name: Test
+        run: swift test
+      - name: Build with xcodebuild
+        run: xcodebuild -scheme OpenNotch -destination 'platform=macOS,arch=arm64' build
+      - name: Bundle the app
+        run: Scripts/build-app.sh
+      - name: Zip the app
+        if: matrix.upload-app
+        run: ditto -c -k --keepParent build/OpenNotch.app build/OpenNotch.zip
+      - name: Upload the app
+        if: matrix.upload-app
+        uses: actions/upload-artifact@v7
+        with:
+          name: OpenNotch-${{ github.event.pull_request.head.sha || github.sha }}
+          path: build/OpenNotch.zip
+          if-no-files-found: error
