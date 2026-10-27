@@ -31,14 +31,14 @@ If `~/OpenNotch` exists already, run `cd ~/OpenNotch && gh pr checkout 1 && git 
 
 ### 1. Run the probe and back up the wallpaper store (1 minute)
 
-The probe only reads. It writes a read-only copy of `Index.plist` and its own report to `~/Desktop/OpenNotch-backup`.
+The probe only reads. It writes a read-only copy of `Index.plist`, a text dump of that file's full structure, and its own report to `~/Desktop/OpenNotch-backup`. It takes about a minute on a Mac with a long Spaces history.
 
 ```sh
 Scripts/mac-probe.sh
 ```
 
 - [ ] If Terminal has no access to your Desktop folder yet, macOS asks for it once. Click **Allow**. No other permission prompt appears. If macOS asks for Screen Recording, Accessibility, or control of another app, click **Don't Allow** and note it.
-- [ ] The last line is `Saved this report to /Users/<you>/Desktop/OpenNotch-backup/probe-<time>.txt`. That folder also holds `Index-<time>.plist`.
+- [ ] The last line is `Saved this report to /Users/<you>/Desktop/OpenNotch-backup/probe-<time>.txt`. That folder also holds `Index-<time>.plist` and `Index-<time>.txt`, the store's full structure with its nested data decoded.
 - [ ] Under `== Apps`, the report shows `TopNotch: not running`. If TopNotch is running, quit it from its own menu, because both apps rewrite the wallpaper.
 - [ ] Under `== Screens`, the built-in display comes first and shows `(built-in)`. Note its `menu bar`, `safe area top`, and `OpenNotch band` numbers. An earlier probe on this Mac measured a 39 pt menu bar and a 38 pt safe area, which gives a band of 39 pt, 78 px.
 - [ ] Under `== What OpenNotch would paint on each screen`, the built-in display ends with `verdict: paints <your photo>, a still image ...`. If it says `"This wallpaper type isn't supported yet"`, set a photo file as the wallpaper and run the probe again.
@@ -154,6 +154,8 @@ diff <(choices "$(ls $b/probe-*.txt | head -1)") <(choices "$(ls $b/probe-*.txt 
 
 - [ ] Only `LastSet` and `LastUse` dates differ.
 
+The summary groups entries that hold the same choice. Each block lists the choice's `Provider`, its `Configuration`, and its placement in the `Content.EncodedOptionValues.values.placement.picker._0.id` line, then an `at` line for each live Space or display that uses it. If the `at` line of a Space you touched moved to another block, that Space's choice changed.
+
 **Not confirmed by the code:** what macOS writes to `Index.plist` when an app sets the wallpaper. Note any other difference, such as a changed `Provider` or `Configuration`, or an all-Spaces entry that split into one entry per Space.
 
 ### 10. Quit and relaunch while on (1.5 minutes)
@@ -177,7 +179,7 @@ diff <(choices "$(ls $b/probe-*.txt | head -1)") <(choices "$(ls $b/probe-*.txt 
 
 ### 11. Use a dynamic wallpaper and keep the menu usable while it paints (2.5 minutes)
 
-1. With OpenNotch off, set a time-of-day or light-and-dark HEIC file as the wallpaper of Desktop 1. The `== Multi-frame (dynamic) HEIC files` section of the probe report lists candidates. In Finder, press ⇧⌘G, paste the file's folder, then right-click the file and choose **Set Desktop Picture**.
+1. With OpenNotch off, set a time-of-day or light-and-dark HEIC file as the wallpaper of Desktop 1. The `== Multi-frame (dynamic) HEIC files` section of the probe report lists candidates with their frame counts and `apple_desktop` tags. Pick one tagged `solar` or `h24` for time of day, or `apr` for light and dark. OpenNotch paints a file with `no apple_desktop tags` as a still. In Finder, press ⇧⌘G, paste the file's folder, then right-click the file and choose **Set Desktop Picture**.
 
 A dynamic wallpaper picked from the System Settings gallery can be an Apple collection, which OpenNotch does not support yet.
 

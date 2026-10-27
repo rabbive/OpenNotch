@@ -1,7 +1,7 @@
 #!/bin/sh
 # Read-only diagnostics for testing OpenNotch on a Mac. Needs no privacy permission and changes no
-# setting. Its only writes are a read-only copy of the wallpaper store's Index.plist and a copy of
-# this report, both in ~/Desktop/OpenNotch-backup.
+# setting. Its only writes are a read-only copy of the wallpaper store's Index.plist, a text dump of
+# that store's full structure, and a copy of this report, all in ~/Desktop/OpenNotch-backup.
 set -eu
 
 index="$HOME/Library/Application Support/com.apple.wallpaper/Store/Index.plist"
@@ -48,11 +48,14 @@ mkdir -p "$backup_dir"
     if [ -f "$support/applied.json" ]; then cat "$support/applied.json"; echo; else echo "No $support/applied.json"; fi
     ls -l "$support/Renders" 2>&1 || true
 
-    INDEX_PLIST="$index" osascript -l JavaScript <<'JXA'
+    INDEX_PLIST="$index" STRUCTURE_FILE="$backup_dir/Index-$stamp.txt" osascript -l JavaScript <<'JXA'
 const NSISOLatin1StringEncoding = 5
 const imageProvider = 'com.apple.wallpaper.choice.image'
+const appleDesktop = 'http://ns.apple.com/namespace/1.0/'
 const rendersFolder = '/Library/Application Support/OpenNotch/Renders/'
 const pictureFolders = ['/System/Library/Desktop Pictures', '/Library/Desktop Pictures']
+// Where macOS keeps the time-of-day pictures it downloaded, relative to the home folder.
+const downloadedPictures = 'Library/Application Support/com.apple.mobileAssetDesktop'
 
 function run() {
   ObjC.import('AppKit')
@@ -75,18 +78,20 @@ function run() {
     for (const list of spaceLists) {
       for (const space of list.spaces) context.labels[space.uuid] = spaceLabel(space, list)
     }
+    const live = spaceLists.flatMap((list) => list.spaces.map((space) => space.uuid))
+    if (live.length > 0) context.liveSpaces = new Set(live)
     describeSpaces(spaceLists, context)
   })
 
   section(out, 'Wallpaper store', () => {
-    const path = ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey('INDEX_PLIST'))
+    const path = env('INDEX_PLIST')
     const data = $.NSData.dataWithContentsOfFile(path)
     if (data.isNil()) throw new Error(`can't read ${path}`)
     store = plain($.NSPropertyListSerialization.propertyListWithDataOptionsFormatError(data, 0, null, null))
     out.push(`${path}, ${Number(data.length)} bytes, top-level keys: ${keysOf(store).map(showKey).join(', ')}`)
   })
 
-  section(out, 'Wallpaper choices in the store (every Desktop and Idle entry)', () => {
+  section(out, 'Wallpaper choices in the store (every Desktop and Idle entry, grouped by choice)', () => {
     if (!store) throw new Error('no wallpaper store')
     describeChoices(store, context)
   })
@@ -97,12 +102,21 @@ function run() {
   })
 
   section(out, 'Multi-frame (dynamic) HEIC files', () => {
-    for (const folder of pictureFolders) describeDynamicFiles(folder, out)
+    out.push('apple_desktop tags solar and h24 mean a time-of-day schedule; apr means light and dark.')
+    const home = ObjC.unwrap($.NSHomeDirectory())
+    for (const folder of pictureFolders.concat(`${home}/${downloadedPictures}`)) describeDynamicFiles(folder, out)
   })
 
+  // Hundreds of thousands of lines on a Mac with a long Spaces history, so it gets its own file.
   section(out, 'Wallpaper store, full structure (nested plist data decoded)', () => {
     if (!store) throw new Error('no wallpaper store')
-    dump(store, 0, undefined, context)
+    const lines = []
+    dump(store, 0, undefined, { out: lines, labels: context.labels })
+    const path = env('STRUCTURE_FILE')
+    if (!$(`${lines.join('\n')}\n`).writeToFileAtomicallyEncodingError(path, true, $.NSUTF8StringEncoding, null)) {
+      throw new Error(`can't write ${path}`)
+    }
+    out.push(`${lines.length} lines written to ${path}`)
   })
 
   return out.join('\n')
@@ -131,9 +145,14 @@ function show(value) {
   return String(value)
 }
 
-function bind(name, signature) {
-  if (typeof $[name] !== 'function') ObjC.bindFunction(name, signature)
-  return $[name]
+function env(name) {
+  return ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey(name))
+}
+
+// AppKit's bridgesupport declares the CoreGraphics and ImageIO functions, and they return opaque
+// Refs, not objects. Cast one to an object to test it for NULL or to unwrap a CFString.
+function cf(ref) {
+  return ObjC.castRefToObject(ref)
 }
 
 // The bridge: Foundation objects in, plain JS trees out. Everything below the bridge works on trees.
@@ -193,12 +212,12 @@ function readScreens() {
     screens.push({
       name: ObjC.unwrap(screen.localizedName),
       id,
+      // Mirrors DisplayTracker.uuid.
       uuid: attempt(() => {
-        const createUUID = bind('CGDisplayCreateUUIDFromDisplayID', ['id', ['unsigned int']])
-        const uuidString = bind('CFUUIDCreateString', ['id', ['id', 'id']])
-        return ObjC.unwrap(uuidString(null, createUUID(id)))
+        const uuid = $.CGDisplayCreateUUIDFromDisplayID(id)
+        return cf(uuid).isNil() ? undefined : ObjC.unwrap(cf($.CFUUIDCreateString(null, uuid)))
       }),
-      builtin: attempt(() => bind('CGDisplayIsBuiltin', ['unsigned int', ['unsigned int']])(id) !== 0),
+      builtin: attempt(() => Boolean($.CGDisplayIsBuiltin(id))),
       width: frame.size.width,
       height: frame.size.height,
       scale: screen.backingScaleFactor,
@@ -212,19 +231,35 @@ function readScreens() {
   return screens.filter((s) => s.builtin === true).concat(screens.filter((s) => s.builtin !== true))
 }
 
-// Mirrors SpaceTracker.parse.
+// Mirrors SpaceTracker.parse. SkyLight is private and has no bridgesupport, so bind it to return an object.
 function readSpaces() {
-  const main = bind('SLSMainConnectionID', ['int', []])
-  const copy = bind('SLSCopyManagedDisplaySpaces', ['id', ['int']])
-  return parseSpaces(plain(copy(main())))
+  ObjC.bindFunction('SLSMainConnectionID', ['int', []])
+  ObjC.bindFunction('SLSCopyManagedDisplaySpaces', ['id', ['int']])
+  return parseSpaces(plain($.SLSCopyManagedDisplaySpaces($.SLSMainConnectionID())))
 }
 
-function frameCount(path) {
-  if (!$.NSFileManager.defaultManager.fileExistsAtPath(path)) return 0
-  const create = bind('CGImageSourceCreateWithURL', ['id', ['id', 'id']])
-  const count = bind('CGImageSourceGetCount', ['unsigned long', ['id']])
-  const source = create($.NSURL.fileURLWithPath(path), null)
-  return source.isNil() ? 0 : Number(count(source))
+// Mirrors the reads in WallpaperSource.classify and DynamicHEIC.hasSchedule: the frame count, and the
+// names of the tags in the apple_desktop namespace across all frames.
+function readFrames(path) {
+  const source = $.CGImageSourceCreateWithURL($.NSURL.fileURLWithPath(path), null)
+  if (cf(source).isNil() || cf($.CGImageSourceGetType(source)).isNil()) return { frames: 0, tags: [] }
+  const frames = Number($.CGImageSourceGetCount(source))
+  const tags = new Set()
+  for (let i = 0; i < frames; i++) {
+    const metadata = $.CGImageSourceCopyMetadataAtIndex(source, i, null)
+    if (cf(metadata).isNil()) continue
+    const list = cf($.CGImageMetadataCopyTags(metadata))
+    for (let j = 0; j < Number(list.count); j++) {
+      const tag = list.objectAtIndex(j)
+      if (ObjC.unwrap(cf($.CGImageMetadataTagCopyNamespace(tag))) === appleDesktop) tags.add(ObjC.unwrap(cf($.CGImageMetadataTagCopyName(tag))))
+    }
+  }
+  return { frames, tags: [...tags].sort() }
+}
+
+function describeFrames(read) {
+  const tags = read.tags.length > 0 ? `apple_desktop tags ${read.tags.join(', ')}` : 'no apple_desktop tags'
+  return `${read.frames} frame${read.frames === 1 ? '' : 's'}, ${tags}`
 }
 
 // Center placement draws the image at its pixel size; macOS may use its point size (from its DPI).
@@ -236,12 +271,12 @@ function imageSize(path) {
 
 // Mirrors WallpaperSource.classify.
 function classify(path) {
-  const frames = attempt(() => frameCount(path))
+  const read = attempt(() => readFrames(path))
+  if ('unavailable' in read) return { kind: 'unknown', text: `can't read frames: ${show(read)}` }
+  if (read.frames === 0) return { kind: 'none', text: 'not an image file' }
   const size = show(attempt(() => imageSize(path)))
-  if (typeof frames !== 'number') return { kind: 'unknown', text: `can't read frames: ${show(frames)}` }
-  if (frames === 0) return { kind: 'none', text: 'not an image file' }
-  if (frames === 1) return { kind: 'image', text: `still image (1 frame, ${size})` }
-  return { kind: 'dynamic', text: `multi-frame image (${frames} frames, ${size}); dynamic if it carries apple_desktop tags` }
+  const kind = read.frames > 1 && read.tags.length > 0 ? 'dynamic' : 'image'
+  return { kind, text: `${kind === 'dynamic' ? 'dynamic' : 'still'} image (${describeFrames(read)}, ${size})` }
 }
 
 function describeDynamicFiles(folder, out) {
@@ -253,11 +288,12 @@ function describeDynamicFiles(folder, out) {
   const heics = []
   for (let i = 0; i < subpaths.count; i++) {
     const subpath = ObjC.unwrap(subpaths.objectAtIndex(i))
-    if (/\.heic$/i.test(subpath)) heics.push(`${folder}/${subpath}`)
+    // Hidden folders such as .thumbnails hold previews, not wallpapers.
+    if (/\.heic$/i.test(subpath) && !/(^|\/)\./.test(subpath)) heics.push(`${folder}/${subpath}`)
   }
-  const dynamic = heics.map((path) => [path, attempt(() => frameCount(path))]).filter(([, frames]) => typeof frames !== 'number' || frames > 1)
+  const dynamic = heics.map((path) => [path, attempt(() => readFrames(path))]).filter(([, read]) => 'unavailable' in read || read.frames > 1)
   out.push(`${folder}: ${heics.length} HEIC files, ${dynamic.length} with more than one frame`)
-  for (const [path, frames] of dynamic) out.push(`  ${path}: ${typeof frames === 'number' ? `${frames} frames` : show(frames)}`)
+  for (const [path, read] of dynamic) out.push(`  ${path}: ${'unavailable' in read ? show(read) : describeFrames(read)}`)
 }
 
 // Everything from here on is pure: plain trees in, report lines out.
@@ -390,30 +426,51 @@ function flatten(node, prefix, lines) {
   return lines
 }
 
+function contentLines(content) {
+  const lines = []
+  items(get(content, 'Choices')).forEach((choice, i) => {
+    lines.push(`choice ${i + 1}: Provider ${show(scalar(get(choice, 'Provider')))}`)
+    for (const [key, value] of choice.entries || []) {
+      if (key !== 'Provider') for (const line of flatten(value, key, [])) lines.push(`    ${line}`)
+    }
+  })
+  // EncodedOptionValues holds the placement and fill color.
+  for (const [key, value] of content.entries) {
+    if (key !== 'Choices') lines.push(...flatten(value, `Content.${key}`, []))
+  }
+  return lines
+}
+
+// macOS keeps an entry for every Space it ever had, so entries with the same Content share one block.
+// Entries for Spaces that SkyLight still lists keep their own lines; the rest are only counted.
 function describeChoices(store, context) {
   const sets = choiceSets(store, [], [])
   if (sets.length === 0) context.out.push('No entry with Content.Choices found')
+  const groups = new Map()
   for (const set of sets) {
-    const where = set.path.map((key) => showKey(key, context.labels)).join(' / ') || '(top level)'
-    const content = get(set.entry, 'Content')
-    context.out.push(`${where} / ${set.kind}`)
-    for (const [key, value] of set.parent.entries) {
-      if (scalar(value) !== undefined) context.out.push(`  beside it, ${key}: ${JSON.stringify(scalar(value))}`)
-    }
-    for (const [key, value] of set.entry.entries) {
-      if (key !== 'Content') context.out.push(`  ${key}: ${value.type === 'data' ? describeData(value) : show(scalar(value) !== undefined ? scalar(value) : value.type)}`)
-    }
-    items(get(content, 'Choices')).forEach((choice, i) => {
-      context.out.push(`  choice ${i + 1}: Provider ${show(scalar(get(choice, 'Provider')))}`)
-      for (const [key, value] of choice.entries || []) {
-        if (key !== 'Provider') for (const line of flatten(value, key, [])) context.out.push(`    ${line}`)
+    const lines = contentLines(get(set.entry, 'Content'))
+    const key = lines.join('\n')
+    if (!groups.has(key)) groups.set(key, { lines, live: [], gone: 0 })
+    const group = groups.get(key)
+    const gone = context.liveSpaces && set.path[0] === 'Spaces' && !context.liveSpaces.has(set.path[1])
+    if (gone) group.gone += 1
+    else group.live.push(set)
+  }
+  context.out.push(`${sets.length} entries, ${groups.size} different choices`)
+  const ordered = [...groups.values()].sort((a, b) => (b.live.length > 0) - (a.live.length > 0))
+  for (const group of ordered) {
+    context.out.push('')
+    for (const line of group.lines) context.out.push(line)
+    for (const set of group.live) {
+      context.out.push(`  at ${set.path.map((key) => showKey(key, context.labels)).join(' / ') || '(top level)'} / ${set.kind}`)
+      for (const [key, value] of set.parent.entries) {
+        if (scalar(value) !== undefined) context.out.push(`    beside it, ${key}: ${JSON.stringify(scalar(value))}`)
       }
-    })
-    for (const [key, value] of content.entries) {
-      if (key === 'Choices') continue
-      const text = value.type === 'data' ? describeData(value).replace(/:$/, '') : value.type === 'dict' || value.type === 'array' ? value.type : JSON.stringify(scalar(value))
-      context.out.push(`  Content.${key}: ${text}`)
+      for (const [key, value] of set.entry.entries) {
+        if (key !== 'Content') context.out.push(`    ${key}: ${value.type === 'data' ? describeData(value) : show(scalar(value) !== undefined ? scalar(value) : value.type)}`)
+      }
     }
+    if (group.gone > 0) context.out.push(`  and ${group.gone} entries for Spaces that macOS no longer lists`)
   }
 }
 
