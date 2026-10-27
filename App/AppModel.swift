@@ -23,9 +23,16 @@ final class AppModel {
     @ObservationIgnored private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     @ObservationIgnored private var wallpaperStoreWatcher: DispatchSourceFileSystemObject?
 
-    var statuses: [DisplayStatus] { engine?.statuses ?? [] }
-    var spacesToVisit: [String] { engine?.spacesToVisit ?? [] }
-    var painting: RenderProgress? { engine?.painting }
+    var statusLines: [StatusLine] {
+        StatusLine.lines(
+            statuses: engine?.statuses ?? [],
+            spacesToVisit: engine?.spacesToVisit ?? [],
+            painting: engine?.painting,
+            isEnabled: isEnabled,
+            builtinOnly: builtinOnly,
+            startupError: startupError
+        )
+    }
 
     private enum Key {
         static let enabled = "enabled"
@@ -43,19 +50,11 @@ final class AppModel {
         darkBand = defaults.string(forKey: Key.darkBand).flatMap(BandColor.init(rawValue:)) ?? .black
         do {
             let desktop = LiveDesktop()
-            let store = try Store(directory: Store.defaultDirectory) {
-                guard let index = desktop.indexPlist() else { return nil }
-                let displays = desktop.displays()
-                let spaces = Dictionary(displays.compactMap { display in
-                    desktop.spaces(display: display.uuid).map { (display.uuid, $0.all.filter(\.isDesktop).map(\.uuid)) }
-                }, uniquingKeysWith: { first, _ in first })
-                guard !displays.isEmpty, spaces.count == displays.count else { return IndexPlist.imageURLs(in: index) }
-                return IndexPlist.imageURLs(in: index, desktopSpacesByDisplay: spaces)
-            }
+            let store = try Store(directory: Store.defaultDirectory) { desktop.indexPlist() }
             engine = NotchEngine(system: desktop, store: store)
         } catch {
             engine = nil
-            startupError = "Can't read saved state: \(error.localizedDescription)"
+            startupError = error.localizedDescription
         }
         observeTriggers()
         scheduleSync(after: .zero)
@@ -152,19 +151,5 @@ final class AppModel {
         source.setCancelHandler { close(descriptor) }
         source.resume()
         wallpaperStoreWatcher = source
-    }
-}
-
-/// The band colors the menu offers.
-enum BandColor: String, CaseIterable {
-    case black, graphite, silver, white
-
-    var rgba: RGBA {
-        switch self {
-        case .black: .black
-        case .graphite: RGBA(red: 0.2, green: 0.2, blue: 0.21)
-        case .silver: RGBA(red: 0.82, green: 0.82, blue: 0.84)
-        case .white: RGBA(red: 1, green: 1, blue: 1)
-        }
     }
 }

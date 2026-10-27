@@ -14,7 +14,7 @@ struct WallpaperSourceTests {
         folder = FileManager.default.temporaryDirectory.appending(path: "OpenNotchSource-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         still = folder.appending(path: "still.png")
-        try WallpaperRenderer.writePNG(TestImages.quadrants(), to: still)
+        try WallpaperRenderer.write(TestImages.quadrants(), to: still)
     }
 
     static func plist(_ value: Any) -> Data {
@@ -63,10 +63,12 @@ struct IndexPlistTests {
     let space = URL(fileURLWithPath: "/w/space.jpg")
     let spaceDefault = URL(fileURLWithPath: "/w/space default.jpg")
     let everywhere = URL(fileURLWithPath: "/w/everywhere.jpg")
+    let forNewDesktops = URL(fileURLWithPath: "/w/system default.jpg")
 
     var store: Data {
         WallpaperSourceTests.plist([
             "AllSpacesAndDisplays": WallpaperSourceTests.desktop(everywhere),
+            "SystemDefault": WallpaperSourceTests.desktop(forNewDesktops),
             "Displays": ["D": WallpaperSourceTests.desktop(display)],
             "Spaces": [
                 "S1": ["Displays": ["D": WallpaperSourceTests.desktop(space)]],
@@ -82,8 +84,9 @@ struct IndexPlistTests {
         #expect(IndexPlist.imageURL(in: store, display: "other", space: nil) == everywhere)
     }
 
-    @Test func everyShownImageIsListed() {
-        #expect(Set(IndexPlist.imageURLs(in: store)) == [display, space, spaceDefault, everywhere])
+    @Test func everyNamedImageIsListed() throws {
+        #expect(try Set(#require(IndexPlist.imageURLs(in: store))) == [display, space, spaceDefault, everywhere, forNewDesktops])
+        #expect(IndexPlist.imageURLs(in: Data("not a plist".utf8)) == nil)
     }
 
     @Test func unrecognisedDataYieldsNothing() {

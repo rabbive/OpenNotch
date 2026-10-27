@@ -7,9 +7,13 @@ struct MenuContent: View {
 
     var body: some View {
         Toggle("Black Menu Bar", isOn: Binding(get: { model.isEnabled }, set: { model.setEnabled($0) }))
-        ForEach(Array(statusLines.enumerated()), id: \.offset) { Text($0.element) }
-        if !model.spacesToVisit.isEmpty {
-            Text("Visit to restore: \(model.spacesToVisit.formatted(.list(type: .and)))")
+        // A status's detail sits in a submenu, so however long it is, the menu keeps its width.
+        ForEach(Array(model.statusLines.enumerated()), id: \.offset) { _, line in
+            if let detail = line.detail {
+                Menu(line.title) { Text(detail) }
+            } else {
+                Text(line.title)
+            }
         }
         Divider()
         Toggle("MacBook Screen Only", isOn: Binding(get: { model.builtinOnly }, set: { model.setBuiltinOnly($0) }))
@@ -33,34 +37,6 @@ struct MenuContent: View {
         Divider()
         Button("Quit OpenNotch") { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")
-    }
-
-    private var statusLines: [String] {
-        if let startupError = model.startupError { return [startupError] }
-        if let painting = model.painting { return [painting.summary] }
-        if model.statuses.isEmpty {
-            guard model.isEnabled else { return ["Off"] }
-            return [model.builtinOnly ? "No built-in display found" : "No display found"]
-        }
-        return model.statuses.map { "\($0.name): \($0.status.summary)" }
-    }
-}
-
-extension NotchStatus {
-    var summary: String {
-        switch self {
-        case .off: "Off"
-        case .applied: "On"
-        case .fullScreenSpace: "Paused in full-screen Spaces"
-        case .unsupportedWallpaper: "This wallpaper type isn't supported yet"
-        case .failed(let message): "Couldn't apply: \(message)"
-        }
-    }
-}
-
-extension RenderProgress {
-    var summary: String {
-        frameCount > 1 ? "Painting wallpaper… \(framesDone) of \(frameCount) frames" : "Painting wallpaper…"
     }
 }
 
