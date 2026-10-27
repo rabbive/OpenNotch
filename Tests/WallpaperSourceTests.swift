@@ -14,7 +14,7 @@ struct WallpaperSourceTests {
         folder = FileManager.default.temporaryDirectory.appending(path: "OpenNotchSource-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         still = folder.appending(path: "still.png")
-        try WallpaperRenderer.writePNG(TestImages.quadrants(), to: still)
+        try WallpaperRenderer.write(TestImages.quadrants(), to: still)
     }
 
     static func plist(_ value: Any) -> Data {

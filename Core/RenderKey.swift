@@ -36,10 +36,28 @@ public struct RenderKey: Hashable, Codable, Sendable {
     static let rendererVersion = 2
 
     public var digest: String {
+        "v\(Self.rendererVersion)-\(fingerprint)"
+    }
+
+    /// The digest without the renderer version, so it also names what older versions drew from these inputs.
+    var fingerprint: String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         let data = (try? encoder.encode(self)) ?? Data(String(describing: self).utf8)
-        let hash = SHA256.hash(data: data).prefix(12).map { String(format: "%02x", $0) }.joined()
-        return "v\(Self.rendererVersion)-\(hash)"
+        return SHA256.hash(data: data).prefix(12).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Whether `render` was drawn from these inputs, by this renderer or an older one. A render's name
+    /// is a hash of its inputs, so a match proves where it came from.
+    public func drew(_ render: URL) -> Bool {
+        render.deletingPathExtension().lastPathComponent.hasSuffix("-\(fingerprint)")
+    }
+
+    /// These inputs without the band and corners: what `WallpaperRenderer.place` draws from.
+    public var placed: RenderKey {
+        var key = self
+        key.corners = .off
+        key.band = .black
+        return key
     }
 }

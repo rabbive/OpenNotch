@@ -9,6 +9,8 @@ OpenNotch reads your wallpaper's image file, draws it at the display's exact pix
 - It never captures the screen, so it needs no Screen Recording, Accessibility, or other privacy permission.
 - macOS only lets an app change the wallpaper of the Space on screen. OpenNotch re-renders when you switch Spaces, change displays, wake the Mac, or change the wallpaper.
 - Renders are cached by their inputs, so returning to a Space sets the same file again. OpenNotch deletes any render no Space uses, so its render folder holds only the wallpapers on show.
+- Each render keeps the original it was drawn from on the file itself. macOS copies a wallpaper an app sets onto other Spaces, so a Space can show a render OpenNotch never set there. OpenNotch still finds the original and repaints it with the current settings when you visit.
+- A still is saved as an uncompressed TIFF, which takes about 33 MB for a 16-inch MacBook Pro screen and is quick to write and to show. After a paint, OpenNotch keeps the decoded wallpaper for two minutes, so a further corner or bar color change only repaints the band.
 - When you turn it off, OpenNotch restores the current Space on every display at once and lists the other Spaces it changed. Visit each one to restore it. A display that was disconnected is restored when you connect it again. This also works after a relaunch.
 
 ## Status

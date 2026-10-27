@@ -12,10 +12,12 @@ public enum NotchStatus: Equatable, Sendable {
 
 public struct DisplayStatus: Equatable, Sendable {
     public let name: String
+    public let isBuiltin: Bool
     public let status: NotchStatus
 
-    public init(name: String, status: NotchStatus) {
+    public init(name: String, isBuiltin: Bool, status: NotchStatus) {
         self.name = name
+        self.isBuiltin = isBuiltin
         self.status = status
     }
 }
@@ -39,6 +41,12 @@ public final class NotchEngine {
 
     @ObservationIgnored private var requested: Settings?
     @ObservationIgnored private var running: Task<Void, Never>?
+    /// The still each display last had placed at screen size, so changing corners or band color only
+    /// repaints those. It holds a screen of pixels, about 44 MB on a 16-inch MacBook Pro, so it is
+    /// dropped `placedLifetime` after the last paint.
+    @ObservationIgnored private var placed: [String: PlacedWallpaper] = [:]
+    @ObservationIgnored private var forgetPlaced: Task<Void, Never>?
+    static let placedLifetime: Duration = .seconds(120)
 
     private struct Settings {
         let enabled: Bool
@@ -82,7 +90,7 @@ public final class NotchEngine {
             } catch {
                 status = .failed(String(describing: error))
             }
-            if on || status != .off { statuses.append(DisplayStatus(name: display.name, status: status)) }
+            if on || status != .off { statuses.append(DisplayStatus(name: display.name, isBuiltin: display.isBuiltin, status: status)) }
             if !on { spacesToVisit += labelsOfSpacesToVisit(display: display, spaces: spaces) }
         }
         if !settings.enabled { spacesToVisit += labelsOfDisconnectedDisplays(connected: displays) }
@@ -105,33 +113,25 @@ public final class NotchEngine {
         // on screen, which may be a render. A render must never be taken for the original.
         let shown = WallpaperSource.resolve(current: current.url, display: display.uuid, space: key.space, indexPlist: indexPlist).url
         let showingRender = shown.map(store.isRender) ?? false
-        let renderRecord = shown.flatMap { store.record(forRender: $0) }
-        guard !showingRender || renderRecord != nil else {
-            return .failed("A render is showing but its original wallpaper wasn't saved")
+        let origin = showingRender ? shown.flatMap { self.origin(ofRender: $0, display: display, band: settings.band) } : nil
+        guard !showingRender || origin != nil else {
+            return .failed("This desktop shows a wallpaper OpenNotch painted, but not which wallpaper it painted over. Choose your wallpaper again in System Settings.")
         }
 
         if !enabled {
-            if let renderRecord, let shown {
-                let options = current.url.map { Self.sameFile($0, shown) } == true ? current.options : renderRecord.originalOptions
-                try recordOtherSpacesShowing(
-                    renderRecord.renderedURL,
-                    originalURL: renderRecord.originalURL,
-                    options: options,
-                    display: display.uuid,
-                    currentSpace: key.space,
-                    spaces: spaces,
-                    indexPlist: indexPlist
-                )
-                try system.setWallpaper(renderRecord.originalURL, options: options, display: display.uuid)
+            if let origin, let shown {
+                let options = current.url.map { Self.sameFile($0, shown) } == true ? current.options : origin.originalOptions
+                try recordOtherDesktopsShowingRenders(display: display, spaces: spaces, indexPlist: indexPlist, band: settings.band)
+                try system.setWallpaper(origin.originalURL, options: options, display: display.uuid)
             }
             try store.forget([key])
             return .off
         }
 
         let original: (url: URL?, options: DesktopOptions)
-        if let renderRecord, let shown {
+        if let origin, let shown {
             // Renders are set with the original options, so other options reported with one are the user's new choice.
-            original = (renderRecord.originalURL, current.url.map { Self.sameFile($0, shown) } == true ? current.options : renderRecord.originalOptions)
+            original = (origin.originalURL, current.url.map { Self.sameFile($0, shown) } == true ? current.options : origin.originalOptions)
         } else {
             original = current
         }
@@ -161,9 +161,12 @@ public final class NotchEngine {
                 ? settings.band
                 : BandColors(settings.band[system.appearance()])
         )
-        let rendered = store.rendersDirectory.appending(path: "\(renderKey.digest).\(isDynamic ? "heic" : "png")")
+        // A still is uncompressed TIFF. On an M1 Pro, a 4112 x 2658 one encodes in 13 ms and the
+        // wallpaper agent decodes it in 14 ms, where a PNG took 540 ms and 150 ms. It is 33 MB on disk,
+        // and the folder only keeps renders on show.
+        let rendered = store.rendersDirectory.appending(path: "\(renderKey.digest).\(isDynamic ? "heic" : "tiff")")
         if !FileManager.default.fileExists(atPath: rendered.path) {
-            try await paint(source, to: rendered, isDynamic: isDynamic, key: renderKey)
+            try await paint(source, to: rendered, isDynamic: isDynamic, key: renderKey, display: display.uuid)
             // The user can switch Spaces or pick another wallpaper while it draws; start over from what is on screen.
             let now = system.wallpaper(display: display.uuid)
             let spacesNow = system.spaces(display: display.uuid)
@@ -182,11 +185,12 @@ public final class NotchEngine {
 
     /// Draws off the main actor, since a dynamic wallpaper can take seconds, and keeps `painting` current.
     /// Utility priority, so a paint yields to whatever the user is doing instead of competing with it.
-    private func paint(_ source: URL, to rendered: URL, isDynamic: Bool, key: RenderKey) async throws {
+    private func paint(_ source: URL, to rendered: URL, isDynamic: Bool, key: RenderKey, display: String) async throws {
         painting = RenderProgress()
         defer { painting = nil }
+        let reusable = placed[display].flatMap { $0.key == key.placed ? $0 : nil }
         let (updates, continuation) = AsyncStream.makeStream(of: RenderProgress.self)
-        let work = Task.detached(priority: .utility) {
+        let work = Task.detached(priority: .utility) { () throws -> PlacedWallpaper? in
             defer { continuation.finish() }
             if isDynamic {
                 try DynamicHEIC.render(
@@ -198,42 +202,69 @@ public final class NotchEngine {
                     corners: key.corners,
                     band: key.band
                 ) { continuation.yield($0) }
-            } else {
-                let image = try WallpaperRenderer.render(
+                return nil
+            }
+            let placed = try reusable ?? PlacedWallpaper(
+                key: key.placed,
+                image: WallpaperRenderer.place(
                     WallpaperRenderer.load(source, for: key.geometry, placement: key.placement),
                     geometry: key.geometry,
                     placement: key.placement,
-                    background: key.background,
-                    corners: key.corners,
-                    band: key.band.light
+                    background: key.background
                 )
-                try WallpaperRenderer.writePNG(image, to: rendered)
-            }
+            )
+            try WallpaperRenderer.write(
+                WallpaperRenderer.finish(placed.image, geometry: key.geometry, corners: key.corners, band: key.band.light),
+                to: rendered
+            )
+            return placed
         }
         for await update in updates { painting = update }
-        try await work.value
+        guard let kept = try await work.value else { return }
+        placed[display] = kept
+        forgetPlaced?.cancel()
+        forgetPlaced = Task { [weak self] in
+            try? await Task.sleep(for: Self.placedLifetime)
+            guard !Task.isCancelled else { return }
+            self?.placed = [:]
+        }
     }
 
-    private func recordOtherSpacesShowing(
-        _ renderedURL: URL,
-        originalURL: URL,
-        options: DesktopOptions,
-        display: String,
-        currentSpace: String?,
-        spaces: DisplaySpaces?,
-        indexPlist: Data?
-    ) throws {
+    /// What a render was drawn from. A render from before OpenNotch kept that on the file has none, but
+    /// its name is a hash of everything that drew it, so a saved original proves itself by hashing to it.
+    private func origin(ofRender render: URL, display: DisplaySnapshot, band: BandColors) -> RenderOrigin? {
+        if let origin = store.origin(ofRender: render) { return origin }
+        let bands = Set([band, BandColors(band.light), BandColors(band.dark), .black])
+        return Set(store.applied.values.map(\.origin)).first { origin in
+            guard let stamp = try? Self.stamp(origin.originalURL) else { return false }
+            return CornerStyle.allCases.contains { corners in
+                bands.contains { candidate in
+                    RenderKey(
+                        sourcePath: origin.originalURL.path,
+                        sourceStamp: stamp,
+                        placement: origin.originalOptions.placement,
+                        background: origin.originalOptions.background,
+                        geometry: display.geometry,
+                        corners: corners,
+                        band: candidate
+                    ).drew(render)
+                }
+            }
+        }
+    }
+
+    /// macOS copies a wallpaper OpenNotch sets onto other Spaces, so turning off also records every other
+    /// desktop showing one of its renders, to restore on the next visit.
+    private func recordOtherDesktopsShowingRenders(display: DisplaySnapshot, spaces: DisplaySpaces?, indexPlist: Data?, band: BandColors) throws {
         guard let spaces, let indexPlist else { return }
-        for space in spaces.all where space.isDesktop && space.uuid != currentSpace {
-            guard let shown = IndexPlist.imageURL(in: indexPlist, display: display, space: space.uuid),
-                  Self.sameFile(shown, renderedURL)
+        for space in spaces.all where space.isDesktop && space.uuid != spaces.current.uuid {
+            let key = SpaceKey(display: display.uuid, space: space.uuid)
+            guard store.applied[key] == nil,
+                  let shown = IndexPlist.imageURL(in: indexPlist, display: display.uuid, space: space.uuid),
+                  store.isRender(shown),
+                  let origin = self.origin(ofRender: shown, display: display, band: band)
             else { continue }
-            try store.record(AppliedWallpaper(
-                key: SpaceKey(display: display, space: space.uuid),
-                originalURL: originalURL,
-                originalOptions: options,
-                renderedURL: renderedURL
-            ))
+            try store.record(AppliedWallpaper(key: key, originalURL: origin.originalURL, originalOptions: origin.originalOptions, renderedURL: shown))
         }
     }
 

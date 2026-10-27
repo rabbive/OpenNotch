@@ -70,7 +70,7 @@ enum Golden {
     static func check(_ image: CGImage, _ name: String, tolerance: Int = 4, filePath: String = #filePath) throws {
         if ProcessInfo.processInfo.environment["RECORD_GOLDENS"] == "1" {
             let directory = URL(fileURLWithPath: filePath).deletingLastPathComponent().appending(path: "Goldens")
-            try WallpaperRenderer.writePNG(image, to: directory.appending(path: "\(name).png"))
+            try WallpaperRenderer.write(image, to: directory.appending(path: "\(name).png"))
             return
         }
         guard let url = Bundle.module.url(forResource: name, withExtension: "png", subdirectory: "Goldens") else {
@@ -89,7 +89,7 @@ enum Golden {
     /// can be recorded on a CI runner by anyone without a Mac.
     static func printPNG(_ image: CGImage, _ name: String) throws {
         let file = FileManager.default.temporaryDirectory.appending(path: "\(name)-\(UUID().uuidString).png")
-        try WallpaperRenderer.writePNG(image, to: file)
+        try WallpaperRenderer.write(image, to: file)
         let bytes = [UInt8](try Data(contentsOf: file))
         for (line, start) in stride(from: 0, to: bytes.count, by: 64).enumerated() {
             print("golden \(name) \(line): " + bytes[start..<min(start + 64, bytes.count)].map(String.init).joined(separator: " "))

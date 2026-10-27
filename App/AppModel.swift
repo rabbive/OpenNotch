@@ -23,9 +23,16 @@ final class AppModel {
     @ObservationIgnored private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     @ObservationIgnored private var wallpaperStoreWatcher: DispatchSourceFileSystemObject?
 
-    var statuses: [DisplayStatus] { engine?.statuses ?? [] }
-    var spacesToVisit: [String] { engine?.spacesToVisit ?? [] }
-    var painting: RenderProgress? { engine?.painting }
+    var statusLines: [StatusLine] {
+        StatusLine.lines(
+            statuses: engine?.statuses ?? [],
+            spacesToVisit: engine?.spacesToVisit ?? [],
+            painting: engine?.painting,
+            isEnabled: isEnabled,
+            builtinOnly: builtinOnly,
+            startupError: startupError
+        )
+    }
 
     private enum Key {
         static let enabled = "enabled"
@@ -55,7 +62,7 @@ final class AppModel {
             engine = NotchEngine(system: desktop, store: store)
         } catch {
             engine = nil
-            startupError = "Can't read saved state: \(error.localizedDescription)"
+            startupError = error.localizedDescription
         }
         observeTriggers()
         scheduleSync(after: .zero)

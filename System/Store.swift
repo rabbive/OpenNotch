@@ -24,6 +24,46 @@ public struct AppliedWallpaper: Codable, Equatable, Sendable {
         self.originalOptions = originalOptions
         self.renderedURL = renderedURL
     }
+
+    public var origin: RenderOrigin {
+        RenderOrigin(originalURL: originalURL, originalOptions: originalOptions)
+    }
+}
+
+/// What a render was drawn from, kept on the render file as an extended attribute so it lasts exactly
+/// as long as the file. macOS copies a wallpaper OpenNotch sets onto other Spaces, which keep showing it
+/// after the Space it was drawn for has moved on, so a Space's record can't be the only way back.
+public struct RenderOrigin: Codable, Hashable, Sendable {
+    public let originalURL: URL
+    public let originalOptions: DesktopOptions
+
+    public init(originalURL: URL, originalOptions: DesktopOptions) {
+        self.originalURL = originalURL
+        self.originalOptions = originalOptions
+    }
+
+    static let attribute = "io.github.rabbive.OpenNotch.origin"
+
+    /// Nil for a file with none, such as a render from before OpenNotch kept them.
+    public static func read(from render: URL) -> RenderOrigin? {
+        render.withUnsafeFileSystemRepresentation { path -> RenderOrigin? in
+            guard let path else { return nil }
+            let size = getxattr(path, attribute, nil, 0, 0, 0)
+            guard size > 0 else { return nil }
+            var data = Data(count: size)
+            let read = data.withUnsafeMutableBytes { getxattr(path, attribute, $0.baseAddress, size, 0, 0) }
+            guard read == size else { return nil }
+            return try? JSONDecoder().decode(RenderOrigin.self, from: data)
+        }
+    }
+
+    public func write(to render: URL) throws {
+        let data = try JSONEncoder().encode(self)
+        let status = render.withUnsafeFileSystemRepresentation { path in
+            data.withUnsafeBytes { setxattr(path, Self.attribute, $0.baseAddress, $0.count, 0, 0) }
+        }
+        guard status == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    }
 }
 
 /// Every replaced wallpaper, saved as JSON after each change so a revert still works after a relaunch,
@@ -52,6 +92,10 @@ public final class Store {
             let list = try JSONDecoder().decode([AppliedWallpaper].self, from: Data(contentsOf: fileURL))
             applied = Dictionary(list.map { ($0.key, $0) }, uniquingKeysWith: { $1 })
         }
+        // Renders drawn before OpenNotch kept an origin on each file get theirs from the records.
+        for record in applied.values where RenderOrigin.read(from: record.renderedURL) == nil {
+            try? record.origin.write(to: record.renderedURL)
+        }
         sweep()
     }
 
@@ -59,12 +103,16 @@ public final class Store {
         url.deletingLastPathComponent().resolvingSymlinksInPath().path == rendersDirectory.resolvingSymlinksInPath().path
     }
 
-    public func record(forRender url: URL) -> AppliedWallpaper? {
+    /// What `url`, one of OpenNotch's renders, was drawn from, whichever Space shows it.
+    public func origin(ofRender url: URL) -> RenderOrigin? {
+        if let origin = RenderOrigin.read(from: url) { return origin }
         let path = url.standardizedFileURL.resolvingSymlinksInPath().path
-        return applied.values.first { $0.renderedURL.standardizedFileURL.resolvingSymlinksInPath().path == path }
+        return applied.values.first { $0.renderedURL.standardizedFileURL.resolvingSymlinksInPath().path == path }?.origin
     }
 
+    /// Saves the origin on the render too, before the render can be set.
     public func record(_ wallpaper: AppliedWallpaper) throws {
+        if RenderOrigin.read(from: wallpaper.renderedURL) == nil { try wallpaper.origin.write(to: wallpaper.renderedURL) }
         guard applied[wallpaper.key] != wallpaper else { return }
         var updated = applied
         updated[wallpaper.key] = wallpaper

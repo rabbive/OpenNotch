@@ -11,6 +11,18 @@ public struct RenderError: Error, CustomStringConvertible {
     }
 }
 
+/// A wallpaper `WallpaperRenderer.place` drew, and the inputs it drew it from.
+public struct PlacedWallpaper: @unchecked Sendable {
+    // @unchecked because CGImage is immutable, so threads can share one.
+    public let key: RenderKey
+    public let image: CGImage
+
+    public init(key: RenderKey, image: CGImage) {
+        self.key = key
+        self.image = image
+    }
+}
+
 public enum WallpaperRenderer {
     /// Draws `source` the way macOS would place it on a `geometry`-sized screen, then paints the
     /// band and the rounded top corners in `band`, and the rounded bottom corners in black, the bezel's
@@ -24,8 +36,38 @@ public enum WallpaperRenderer {
         corners: CornerStyle,
         band: RGBA
     ) throws -> CGImage {
-        let space = source.colorSpace.flatMap { $0.model == .rgb ? $0 : nil }
-            ?? CGColorSpace(name: CGColorSpace.sRGB)!
+        try finish(place(source, geometry: geometry, placement: placement, background: background), geometry: geometry, corners: corners, band: band)
+    }
+
+    /// `source` on a `geometry`-sized screen with no band or corners. Decoding and scaling the source
+    /// are most of a render's time, and a change of corners or band color leaves this unchanged.
+    public static func place(_ source: CGImage, geometry: BarGeometry, placement: Placement, background: RGBA) throws -> CGImage {
+        let context = try canvas(geometry, colorSpace: source.colorSpace)
+        let canvas = CGRect(x: 0, y: 0, width: geometry.pixelWidth, height: geometry.pixelHeight)
+        context.setFillColor(background.cgColor)
+        context.fill(canvas)
+        context.interpolationQuality = .high
+        context.draw(source, in: placement.rect(for: CGSize(width: source.width, height: source.height), in: canvas.size))
+        return try image(of: context)
+    }
+
+    /// Paints the band and corners over a wallpaper `place` drew for the same `geometry`.
+    public static func finish(_ placed: CGImage, geometry: BarGeometry, corners: CornerStyle, band: RGBA) throws -> CGImage {
+        let context = try canvas(geometry, colorSpace: placed.colorSpace)
+        context.draw(placed, in: CGRect(x: 0, y: 0, width: geometry.pixelWidth, height: geometry.pixelHeight))
+        context.setFillColor(band.cgColor)
+        context.addPath(maskPath(geometry: geometry, corners: corners))
+        context.fillPath(using: .evenOdd)
+        if corners != .off {
+            context.setFillColor(RGBA.black.cgColor)
+            context.addPath(bottomCornersPath(geometry: geometry, corners: corners))
+            context.fillPath(using: .evenOdd)
+        }
+        return try image(of: context)
+    }
+
+    private static func canvas(_ geometry: BarGeometry, colorSpace: CGColorSpace?) throws -> CGContext {
+        let space = colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? CGColorSpace(name: CGColorSpace.sRGB)!
         guard let context = CGContext(
             data: nil,
             width: geometry.pixelWidth,
@@ -35,19 +77,10 @@ public enum WallpaperRenderer {
             space: space,
             bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
         ) else { throw RenderError(description: "Can't create a \(geometry.pixelWidth)x\(geometry.pixelHeight) canvas") }
-        let canvas = CGRect(x: 0, y: 0, width: geometry.pixelWidth, height: geometry.pixelHeight)
-        context.setFillColor(background.cgColor)
-        context.fill(canvas)
-        context.interpolationQuality = .high
-        context.draw(source, in: placement.rect(for: CGSize(width: source.width, height: source.height), in: canvas.size))
-        context.setFillColor(band.cgColor)
-        context.addPath(maskPath(geometry: geometry, corners: corners))
-        context.fillPath(using: .evenOdd)
-        if corners != .off {
-            context.setFillColor(RGBA.black.cgColor)
-            context.addPath(bottomCornersPath(geometry: geometry, corners: corners))
-            context.fillPath(using: .evenOdd)
-        }
+        return context
+    }
+
+    private static func image(of context: CGContext) throws -> CGImage {
         guard let image = context.makeImage() else { throw RenderError(description: "Can't finish the render") }
         return image
     }
@@ -131,9 +164,12 @@ public enum WallpaperRenderer {
     }
 
     /// Writes beside the destination and renames, so a crash never leaves a half-written wallpaper.
-    public static func writePNG(_ image: CGImage, to url: URL) throws {
+    /// The file type follows the extension.
+    public static func write(_ image: CGImage, to url: URL) throws {
+        guard let type = UTType(filenameExtension: url.pathExtension)
+        else { throw RenderError(description: "Can't write \(url.lastPathComponent)") }
         let partial = url.appendingPathExtension("partial")
-        guard let destination = CGImageDestinationCreateWithURL(partial as CFURL, UTType.png.identifier as CFString, 1, nil)
+        guard let destination = CGImageDestinationCreateWithURL(partial as CFURL, type.identifier as CFString, 1, nil)
         else { throw RenderError(description: "Can't write \(url.lastPathComponent)") }
         CGImageDestinationAddImage(destination, image, nil)
         guard CGImageDestinationFinalize(destination) else { throw RenderError(description: "Can't encode \(url.lastPathComponent)") }

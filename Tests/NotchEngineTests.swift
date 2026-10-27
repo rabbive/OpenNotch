@@ -99,8 +99,8 @@ struct NotchEngineTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         photo = folder.appending(path: "photo.png")
         otherPhoto = folder.appending(path: "other.png")
-        try WallpaperRenderer.writePNG(TestImages.quadrants(), to: photo)
-        try WallpaperRenderer.writePNG(TestImages.quadrants(width: 30, height: 30), to: otherPhoto)
+        try WallpaperRenderer.write(TestImages.quadrants(), to: photo)
+        try WallpaperRenderer.write(TestImages.quadrants(width: 30, height: 30), to: otherPhoto)
         for display in [Displays.builtin, Displays.external] {
             for space in desktop.spaceIDs { desktop[space, on: display.uuid] = (photo, options) }
         }
@@ -124,7 +124,7 @@ struct NotchEngineTests {
     }
 
     func statuses(_ status: NotchStatus, _ displays: DisplaySnapshot...) -> [DisplayStatus] {
-        displays.map { DisplayStatus(name: $0.name, status: status) }
+        displays.map { DisplayStatus(name: $0.name, isBuiltin: $0.isBuiltin, status: status) }
     }
 
     /// Runs `action` once, the moment a render starts drawing, while it still runs.
@@ -491,6 +491,90 @@ struct NotchEngineTests {
         #expect(engine.spacesToVisit.isEmpty)
         #expect(store.applied.isEmpty)
         #expect(try renders().isEmpty)
+    }
+
+    @Test func aSettingChangedOnOneDesktopReachesADesktopShowingACopiedRender() async throws {
+        let (engine, store) = try makeEngine()
+        await engine.sync(enabled: true, corners: .off)
+        // macOS copies the wallpaper an app sets onto other desktops, which then keep it.
+        desktop["S2"] = (try #require(desktop[""]?.url), options)
+        await engine.sync(enabled: true, corners: .high)
+
+        desktop.currentSpace = "S2"
+        await engine.sync(enabled: true, corners: .high)
+        #expect(engine.statuses == statuses(.applied, Displays.builtin))
+        #expect(desktop["S2"]?.url == desktop[""]?.url)
+        #expect(store.applied[SpaceKey(display: Displays.builtin.uuid, space: "S2")]?.originalURL == photo)
+        await engine.sync(enabled: false, corners: .high)
+        #expect(desktop["S2"]?.url == photo)
+        #expect(desktop["S2"]?.options == options)
+    }
+
+    @Test func turningOffListsEveryDesktopShowingARender() async throws {
+        let (engine, _) = try makeEngine()
+        await engine.sync(enabled: true, corners: .off)
+        desktop["S2"] = (try #require(desktop[""]?.url), options)
+        await engine.sync(enabled: true, corners: .high)
+
+        await engine.sync(enabled: false, corners: .high)
+        #expect(desktop[""]?.url == photo)
+        #expect(engine.spacesToVisit == ["Desktop 2"])
+        await visit("S2", engine, enabled: false)
+        #expect(desktop["S2"]?.url == photo)
+        #expect(engine.spacesToVisit.isEmpty)
+        #expect(try renders().isEmpty)
+    }
+
+    @Test func aRenderAnOlderOpenNotchLeftIsTracedToItsOriginalByItsName() async throws {
+        let (engine, store) = try makeEngine()
+        await engine.sync(enabled: true, corners: .off)
+        // Version 1 kept no origin on the file, and a turn-off could forget the only record naming it.
+        let current = try #require(desktop[""]?.url)
+        let legacy = store.rendersDirectory.appending(path: "v1-\(current.lastPathComponent.dropFirst(3))")
+        try FileManager.default.copyItem(at: current, to: legacy)
+        _ = removexattr(legacy.path, "io.github.rabbive.OpenNotch.origin", 0)
+        try #require(RenderOrigin.read(from: legacy) == nil)
+        desktop["S2"] = (legacy, options)
+
+        desktop.currentSpace = "S2"
+        await engine.sync(enabled: true, corners: .high)
+        #expect(engine.statuses == statuses(.applied, Displays.builtin))
+        #expect(store.applied[SpaceKey(display: Displays.builtin.uuid, space: "S2")]?.originalURL == photo)
+        #expect(try !renders().contains(legacy.lastPathComponent))
+        await engine.sync(enabled: false, corners: .high)
+        #expect(desktop["S2"]?.url == photo)
+        #expect(desktop["S2"]?.options == options)
+    }
+
+    @Test func aRenderWithNoKnownOriginalIsLeftAlone() async throws {
+        let (engine, store) = try makeEngine()
+        let stray = store.rendersDirectory.appending(path: "v1-0123456789abcdef01234567.png")
+        try WallpaperRenderer.write(TestImages.quadrants(), to: stray)
+        desktop[""] = (stray, options)
+        await engine.sync(enabled: true, corners: .off)
+        guard case .failed = try #require(engine.statuses.first).status else {
+            Issue.record("expected a failure, got \(engine.statuses)")
+            return
+        }
+        #expect(desktop.setCount == 0)
+    }
+
+    @Test func aCornerChangeLooksTheSameAsAFreshPaint() async throws {
+        let (engine, _) = try makeEngine()
+        let band = BandColors(RGBA(red: 0.82, green: 0.82, blue: 0.84))
+        await engine.sync(enabled: true, corners: .off)
+        await engine.sync(enabled: true, corners: .high, band: band)
+        let geometry = Displays.builtin.geometry
+        let fresh = try WallpaperRenderer.render(
+            WallpaperRenderer.load(photo, for: geometry, placement: options.placement),
+            geometry: geometry,
+            placement: options.placement,
+            background: options.background,
+            corners: .high,
+            band: band.light
+        )
+        let shown = TestImages.Pixels(try TestImages.read(try #require(desktop[""]?.url)))
+        #expect(shown.bytes == TestImages.Pixels(fresh).bytes)
     }
 
     func bandPixel(_ space: String = "") throws -> [UInt8] {

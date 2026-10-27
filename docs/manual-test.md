@@ -94,19 +94,20 @@ Leave it on if you plan to do optional step O5. The last step turns it off.
 
 1. On Desktop 1, choose **Black Menu Bar**.
 
-- [ ] The status line shows `Painting wallpaper…`, then `<built-in display name>: On`. The name is the one macOS gives the display, such as `Built-in Retina Display`.
+- [ ] The status line shows `Painting wallpaper…`, then `MacBook: On`. A status line is never wider than the menu's other items. A longer explanation, such as an error, is in a submenu on the status line.
 - [ ] The wallpaper is black from the top edge down to the bottom of the menu bar, across the full width. The notch blends into the black.
 - [ ] No black shows below the menu bar, and no strip of wallpaper shows inside it.
 - [ ] Below the band, the wallpaper keeps the same crop and position as before.
-- [ ] `ls "$support/Renders"` lists one file named `v2-` followed by 24 hex characters and `.png`.
+- [ ] `ls "$support/Renders"` lists one file named `v2-` followed by 24 hex characters and `.tiff`.
+- [ ] `xattr -p io.github.rabbive.OpenNotch.origin "$support"/Renders/*.tiff` prints JSON with your photo's path as `originalURL`. Every render keeps its original this way, so OpenNotch can restore any Space that shows it.
 
 2. Run `Scripts/mac-probe.sh` again.
 
-- [ ] Under `== What OpenNotch would paint on each screen`, the built-in display ends with `verdict: showing an OpenNotch render, /Users/<you>/Library/Application Support/OpenNotch/Renders/v2-….png`.
+- [ ] Under `== What OpenNotch would paint on each screen`, the built-in display ends with `verdict: showing an OpenNotch render, /Users/<you>/Library/Application Support/OpenNotch/Renders/v2-….tiff`.
 
 If the verdict names your original photo or a system path instead, stop and send the report. Turning OpenNotch off restores a Space only when macOS reports the render as its wallpaper, through `desktopImageURL` or the wallpaper store. Lines `1.` and `2.` above the verdict show which source reported what.
 
-Rendering time depends on the source and Mac. On an M1 Pro, the render steps for a 5422 × 3615 JPEG on a 4112 × 2658 screen measured about 0.65 seconds: decode 0.1 s, draw under 0.03 s, PNG encode 0.5 s. Wait for the status line to clear.
+Rendering time depends on the source and Mac. On an M1 Pro, painting a 5422 × 3615 JPEG for a 4112 × 2658 screen takes about 0.35 seconds: decode and scale 0.3 s, band under 0.03 s, uncompressed TIFF 0.015 s. A corner or bar color change within two minutes of the last paint reuses the decoded wallpaper and takes about 0.03 s. Wait for the status line to clear.
 
 **Not confirmed by the code:** macOS picks the menu bar text color. Note whether the text turns white over the black band.
 
@@ -114,7 +115,7 @@ Rendering time depends on the source and Mac. On an M1 Pro, the render steps for
 
 1. Choose **Rounded Corners > Small**, then **Medium**, then **High**, then **Off**.
 
-- [ ] After each choice, the status line returns to `On` when the render finishes.
+- [ ] After each choice, the wallpaper changes within about a second, and the status line returns to `MacBook: On`.
 - [ ] For Small, Medium, and High, all four corners of the wallpaper become rounded. The two top corners, just below the band, have the band color outside the curve, and the two bottom corners have black. The radius is 6, 10, and 16 points. The Dock or a window can cover a bottom corner.
 - [ ] For Off, the band's bottom edge is straight from side to side again, and the bottom corners are square.
 - [ ] After each choice, `ls "$support/Renders"` still lists one file. OpenNotch deletes the old render once the new one is set.
@@ -124,7 +125,7 @@ Rendering time depends on the source and Mac. On an M1 Pro, the render steps for
 1. Switch to Desktop 2 with Control-Right Arrow.
 
 - [ ] Desktop 2 gets the band within about half a second. You may see its wallpaper without the band for a moment first.
-- [ ] The status line shows `<built-in display name>: On`.
+- [ ] The status line shows `MacBook: On`.
 
 2. Switch to Desktop 1, then to Desktop 2, then to Desktop 1 again.
 
@@ -137,7 +138,7 @@ Rendering time depends on the source and Mac. On an M1 Pro, the render steps for
 1. On Desktop 1, uncheck **Black Menu Bar**.
 
 - [ ] Desktop 1 shows its original photo with its original placement at once.
-- [ ] The menu shows `Off` and `Visit to restore: Desktop 2`.
+- [ ] The menu shows `Off` and `Visit to restore`. Its submenu reads `Visit Desktop 2 to restore the wallpaper.`
 
 2. Switch to Desktop 2.
 
@@ -169,11 +170,11 @@ The summary groups entries that hold the same choice. Each block lists the choic
 
 3. Run `open -a OpenNotch`.
 
-- [ ] The icon appears. The menu shows **Black Menu Bar** checked and `<built-in display name>: On`. The wallpaper does not flash.
+- [ ] The icon appears. The menu shows **Black Menu Bar** checked and `MacBook: On`. The wallpaper does not flash.
 
 4. Uncheck **Black Menu Bar**.
 
-- [ ] Desktop 1 is restored at once, and the menu shows `Visit to restore: Desktop 2`.
+- [ ] Desktop 1 is restored at once, and the menu shows `Visit to restore`, with Desktop 2 named in its submenu.
 
 5. Visit Desktop 2.
 
@@ -187,12 +188,12 @@ A dynamic wallpaper picked from the System Settings gallery can be an Apple coll
 
 2. Choose **Black Menu Bar**. Then open the menu again at once.
 
-- [ ] The status line reads `Painting wallpaper… N of M frames`. M is the file's frame count. N grows each time you reopen the menu.
+- [ ] The status line reads `Painting… N of M`. M is the file's frame count. N grows each time you reopen the menu.
 - [ ] While it paints, the menu opens and responds, and the **Rounded Corners** submenu opens. Note how many seconds the paint takes.
-- [ ] Then the status line shows `<built-in display name>: On`, and the wallpaper has the band.
+- [ ] Then the status line shows `MacBook: On`, and the wallpaper has the band.
 - [ ] `ls "$support/Renders"` lists a `.heic` file.
 
-If the status line shows `Painting wallpaper…` with no frame count and the render is a `.png`, the file has no `apple_desktop` schedule tags. OpenNotch then paints it as a still. Pick another file.
+If the status line shows `Painting wallpaper…` with no frame count and the render is a `.tiff`, the file has no `apple_desktop` schedule tags. OpenNotch then paints it as a still. Pick another file.
 
 3. Open **System Settings > Appearance**, and switch between **Light** and **Dark**.
 
@@ -229,12 +230,12 @@ Do this step only if an external display is connected.
 
 2. Uncheck **MacBook Screen Only**.
 
-- [ ] The external display gets a band as tall as its own menu bar. A second status line shows `<external display name>: On`.
+- [ ] The external display gets a band as tall as its own menu bar. A second status line shows `<external display name>: On`, with a long name cut short.
 
 3. Check **MacBook Screen Only** again.
 
 - [ ] The external display gets its original wallpaper back on its current Space, and its status line disappears.
-- [ ] If you visited other Spaces on the external display in between, the menu lists them as `Visit to restore: Desktop N on <external display name>`.
+- [ ] If you visited other Spaces on the external display in between, the `Visit to restore` submenu names them as `Desktop N on <external display name>`.
 
 4. Uncheck **Black Menu Bar**.
 
@@ -272,7 +273,7 @@ This step changes your wallpaper settings. The backup from step 1 records them.
 1. With OpenNotch off, pick a still picture from Apple's gallery in **System Settings > Wallpaper**. If it offers **Automatic**, **Light**, or **Dark**, note the choice. Run `Scripts/mac-probe.sh`.
 2. Choose **Black Menu Bar**.
 
-- [ ] Note the status line. The code shows `On` when the store names an image file for this Space, and `This wallpaper type isn't supported yet` otherwise. In the second case, nothing changes.
+- [ ] Note the status line. The code shows `MacBook: On` when the store names an image file for this Space, and `MacBook: Not supported` otherwise. In the second case, nothing changes.
 
 3. Uncheck **Black Menu Bar**, and run `Scripts/mac-probe.sh` again. Compare the store summaries with the `diff` command from step 9.
 
@@ -283,7 +284,7 @@ This step changes your wallpaper settings. The backup from step 1 records them.
 1. With **Launch at Login** on, choose **Black Menu Bar**, and visit both Spaces. Run `ls "$support/Renders"`, and note the file names.
 2. Log out, and log back in.
 
-- [ ] OpenNotch starts by itself. Its icon shows, and its menu shows `<built-in display name>: On`.
+- [ ] OpenNotch starts by itself. Its icon shows, and its menu shows `MacBook: On`.
 - [ ] Both Spaces show the band, with no flash.
 - [ ] `ls ~/Library/Application\ Support/OpenNotch/Renders` lists the same file names. Each render's name comes from its inputs, so nothing renders again.
 
@@ -312,9 +313,13 @@ This step changes your wallpaper settings. The backup from step 1 records them.
 1. Turn on **Black Menu Bar** on Desktop 1. Use Mission Control to create Desktop 2 while OpenNotch is on.
 2. Visit Desktop 2 while OpenNotch is still on.
 
-- [ ] The menu shows `<built-in display name>: On`. If macOS copied the render, the wallpaper keeps its band without an error.
+- [ ] The menu shows `MacBook: On`. If macOS copied the render, the wallpaper gets the current corners and bar color without an error.
 
-3. Return to Desktop 1, turn OpenNotch off, then visit Desktop 2.
+3. Return to Desktop 1 and choose another **Rounded Corners** style. Then visit Desktop 2.
+
+- [ ] Desktop 2 changes to the new corners when you arrive. macOS gave it Desktop 1's old render, and OpenNotch reads the original from that render file.
+
+4. Return to Desktop 1, turn OpenNotch off, then visit Desktop 2.
 
 - [ ] Desktop 1 and Desktop 2 show their original wallpaper after you visit each one. The `Visit to restore` line clears, and `ls "$support/Renders"` lists no files.
 
@@ -322,7 +327,7 @@ This step changes your wallpaper settings. The backup from step 1 records them.
 
 ### Turn it off
 
-Uncheck **Black Menu Bar**, then visit each Space that the `Visit to restore` line names. OpenNotch can only change the Space on screen, so each Space is restored on your next visit. The list survives a relaunch.
+Uncheck **Black Menu Bar**, then visit each Space that the `Visit to restore` submenu names. OpenNotch can only change the Space on screen, so each Space is restored on your next visit. The list survives a relaunch.
 
 If the icon is hidden, run `open -a OpenNotch`. If that fails, run `killall OpenNotch && open -a OpenNotch`.
 
@@ -332,10 +337,10 @@ To stop OpenNotch from coming back, uncheck **Launch at Login** and choose **Qui
 
 - Settings are in the `io.github.rabbive.OpenNotch` defaults domain. The keys are `enabled`, `builtinOnly`, and `corners`. Read them with `defaults read io.github.rabbive.OpenNotch`.
 - Saved originals are in `~/Library/Application Support/OpenNotch/applied.json`. Each record has a `key` (the `display` UUID and the `space` UUID), the `originalURL`, the `originalOptions`, and the `renderedURL`. The `space` is `""` for the first desktop. JSON escapes the slashes in the URLs as `\/`.
-- Renders are in `~/Library/Application Support/OpenNotch/Renders`, named `v2-<hash>.png` or `v2-<hash>.heic`. At launch and after each sync, OpenNotch deletes renders that no saved record or live desktop Space references.
+- Renders are in `~/Library/Application Support/OpenNotch/Renders`, named `v2-<hash>.tiff` or `v2-<hash>.heic`. Each keeps its original wallpaper and placement options in the `io.github.rabbive.OpenNotch.origin` extended attribute. At launch and after each sync, OpenNotch deletes renders that no saved record or live desktop Space references. Renders from older builds have no such attribute. Their name is a hash of what drew them, so OpenNotch matches it against the originals in `applied.json`.
 - Logs: `log show --last 10m --predicate 'process == "OpenNotch"'`.
 
-Do not delete `applied.json` while a render is on screen. It is the only record of the original.
+Do not delete `applied.json` while a render is on screen. It lists the Spaces to restore.
 
 ### Restore one Space by hand
 
