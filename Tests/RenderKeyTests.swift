@@ -14,7 +14,7 @@ struct RenderKeyTests {
 
     @Test func sameInputsGiveTheSameFileName() {
         #expect(base.digest == base.digest)
-        #expect(base.digest.hasPrefix("v1-"))
+        #expect(base.digest.hasPrefix("v2-"))
     }
 
     @Test(arguments: 0..<8)

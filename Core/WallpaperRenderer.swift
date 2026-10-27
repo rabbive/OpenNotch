@@ -13,7 +13,8 @@ public struct RenderError: Error, CustomStringConvertible {
 
 public enum WallpaperRenderer {
     /// Draws `source` the way macOS would place it on a `geometry`-sized screen, then paints the
-    /// band (and rounded corners) in `band`. The result matches the screen pixel for pixel, so the
+    /// band and the rounded top corners in `band`, and the rounded bottom corners in black, the bezel's
+    /// color. The result matches the screen pixel for pixel, so the
     /// system shows it unscaled whatever placement option it is set with.
     public static func render(
         _ source: CGImage,
@@ -42,6 +43,11 @@ public enum WallpaperRenderer {
         context.setFillColor(band.cgColor)
         context.addPath(maskPath(geometry: geometry, corners: corners))
         context.fillPath(using: .evenOdd)
+        if corners != .off {
+            context.setFillColor(RGBA.black.cgColor)
+            context.addPath(bottomCornersPath(geometry: geometry, corners: corners))
+            context.fillPath(using: .evenOdd)
+        }
         guard let image = context.makeImage() else { throw RenderError(description: "Can't finish the render") }
         return image
     }
@@ -52,7 +58,7 @@ public enum WallpaperRenderer {
         let width = CGFloat(geometry.pixelWidth)
         let height = CGFloat(geometry.pixelHeight)
         let below = height - CGFloat(geometry.bandHeight)
-        let radius = max(0, min(CGFloat(corners.radius * geometry.scale), width / 2, below / 2))
+        let radius = cornerRadius(geometry: geometry, corners: corners)
         let path = CGMutablePath()
         path.addRect(CGRect(x: 0, y: 0, width: width, height: height))
         path.addRoundedRect(
@@ -61,6 +67,29 @@ public enum WallpaperRenderer {
             cornerHeight: radius
         )
         return path
+    }
+
+    /// The canvas minus a rounded rect that runs off the top edge, so even-odd filling paints only
+    /// the two bottom corners.
+    public static func bottomCornersPath(geometry: BarGeometry, corners: CornerStyle) -> CGPath {
+        let width = CGFloat(geometry.pixelWidth)
+        let height = CGFloat(geometry.pixelHeight)
+        let radius = cornerRadius(geometry: geometry, corners: corners)
+        let path = CGMutablePath()
+        path.addRect(CGRect(x: 0, y: 0, width: width, height: height))
+        path.addRoundedRect(
+            in: CGRect(x: 0, y: 0, width: width, height: height + radius),
+            cornerWidth: radius,
+            cornerHeight: radius
+        )
+        return path
+    }
+
+    /// In pixels, small enough that the top and bottom corners never meet below the band.
+    static func cornerRadius(geometry: BarGeometry, corners: CornerStyle) -> CGFloat {
+        let width = CGFloat(geometry.pixelWidth)
+        let below = CGFloat(geometry.pixelHeight - geometry.bandHeight)
+        return max(0, min(CGFloat(corners.radius * geometry.scale), width / 2, below / 2))
     }
 
     public static func load(_ url: URL, for geometry: BarGeometry, placement: Placement) throws -> CGImage {

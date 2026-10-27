@@ -57,24 +57,37 @@ struct WallpaperRendererTests {
     }
 
     @Test(arguments: [CornerStyle.small, .medium, .high])
-    func roundingBlackensOnlyTheTopCorners(corners: CornerStyle) throws {
+    func roundingBlackensAllFourCorners(corners: CornerStyle) throws {
         let pixels = TestImages.Pixels(try render(corners: corners))
         let below = geometry.bandHeight
-        #expect(pixels[0, below] == black)
-        #expect(pixels[159, below] == black)
-        #expect(pixels[80, below] != black)
-        #expect(pixels[0, 99] != black)
+        for (x, y) in [(0, below), (159, below), (0, 99), (159, 99)] {
+            #expect(pixels[x, y] == black, "corner pixel \(x),\(y) is \(pixels[x, y])")
+        }
+        for (x, y) in [(80, below), (80, 99), (0, 50), (159, 50)] {
+            #expect(pixels[x, y] != black, "edge pixel \(x),\(y) is black")
+        }
+    }
+
+    @Test func bottomCornersStayBlackUnderAColoredBand() throws {
+        let pixels = TestImages.Pixels(try render(corners: .medium, band: silver))
+        for x in [0, 159] {
+            #expect(zip(pixels[x, geometry.bandHeight], [209, 209, 214]).allSatisfy { abs(Int($0) - $1) <= 1 }, "top corner at x \(x) is \(pixels[x, geometry.bandHeight])")
+            #expect(pixels[x, 99] == black, "bottom corner at x \(x) is \(pixels[x, 99])")
+        }
     }
 
     @Test func squareCornersLeaveTheWallpaper() throws {
         let pixels = TestImages.Pixels(try render(corners: .off))
         #expect(pixels[0, geometry.bandHeight] == [255, 0, 0])
+        #expect(pixels[0, 99] == [0, 0, 255])
+        #expect(pixels[159, 99] == [255, 255, 255])
     }
 
     @Test func largerRadiusRoundsDeeper() throws {
-        let probe = (x: 5, y: geometry.bandHeight + 5)
-        #expect(TestImages.Pixels(try render(corners: .small))[probe.x, probe.y] != black)
-        #expect(TestImages.Pixels(try render(corners: .high))[probe.x, probe.y] == black)
+        for probe in [(x: 5, y: geometry.bandHeight + 5), (x: 154, y: 94)] {
+            #expect(TestImages.Pixels(try render(corners: .small))[probe.x, probe.y] != black)
+            #expect(TestImages.Pixels(try render(corners: .high))[probe.x, probe.y] == black)
+        }
     }
 
     @Test func fitLetterboxesWithTheFillColor() throws {

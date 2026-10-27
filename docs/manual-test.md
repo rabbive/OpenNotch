@@ -98,11 +98,11 @@ Leave it on if you plan to do optional step O5. The last step turns it off.
 - [ ] The wallpaper is black from the top edge down to the bottom of the menu bar, across the full width. The notch blends into the black.
 - [ ] No black shows below the menu bar, and no strip of wallpaper shows inside it.
 - [ ] Below the band, the wallpaper keeps the same crop and position as before.
-- [ ] `ls "$support/Renders"` lists one file named `v1-` followed by 24 hex characters and `.png`.
+- [ ] `ls "$support/Renders"` lists one file named `v2-` followed by 24 hex characters and `.png`.
 
 2. Run `Scripts/mac-probe.sh` again.
 
-- [ ] Under `== What OpenNotch would paint on each screen`, the built-in display ends with `verdict: showing an OpenNotch render, /Users/<you>/Library/Application Support/OpenNotch/Renders/v1-….png`.
+- [ ] Under `== What OpenNotch would paint on each screen`, the built-in display ends with `verdict: showing an OpenNotch render, /Users/<you>/Library/Application Support/OpenNotch/Renders/v2-….png`.
 
 If the verdict names your original photo or a system path instead, stop and send the report. Turning OpenNotch off restores a Space only when macOS reports the render as its wallpaper, through `desktopImageURL` or the wallpaper store. Lines `1.` and `2.` above the verdict show which source reported what.
 
@@ -115,8 +115,8 @@ Rendering time depends on the source and Mac. On an M1 Pro, the render steps for
 1. Choose **Rounded Corners > Small**, then **Medium**, then **High**, then **Off**.
 
 - [ ] After each choice, the status line returns to `On` when the render finishes.
-- [ ] For Small, Medium, and High, the two top corners of the wallpaper, just below the band, become rounded with black outside the curve. The radius is 6, 10, and 16 points. The bottom corners never change.
-- [ ] For Off, the band's bottom edge is straight from side to side again.
+- [ ] For Small, Medium, and High, all four corners of the wallpaper become rounded. The two top corners, just below the band, have the band color outside the curve, and the two bottom corners have black. The radius is 6, 10, and 16 points. The Dock or a window can cover a bottom corner.
+- [ ] For Off, the band's bottom edge is straight from side to side again, and the bottom corners are square.
 - [ ] After each choice, `ls "$support/Renders"` still lists one file. OpenNotch deletes the old render once the new one is set.
 
 ### 8. Switch Spaces and come back (1.5 minutes)
@@ -332,7 +332,7 @@ To stop OpenNotch from coming back, uncheck **Launch at Login** and choose **Qui
 
 - Settings are in the `io.github.rabbive.OpenNotch` defaults domain. The keys are `enabled`, `builtinOnly`, and `corners`. Read them with `defaults read io.github.rabbive.OpenNotch`.
 - Saved originals are in `~/Library/Application Support/OpenNotch/applied.json`. Each record has a `key` (the `display` UUID and the `space` UUID), the `originalURL`, the `originalOptions`, and the `renderedURL`. The `space` is `""` for the first desktop. JSON escapes the slashes in the URLs as `\/`.
-- Renders are in `~/Library/Application Support/OpenNotch/Renders`, named `v1-<hash>.png` or `v1-<hash>.heic`. At launch and after each sync, OpenNotch deletes renders that no saved record or live desktop Space references.
+- Renders are in `~/Library/Application Support/OpenNotch/Renders`, named `v2-<hash>.png` or `v2-<hash>.heic`. At launch and after each sync, OpenNotch deletes renders that no saved record or live desktop Space references.
 - Logs: `log show --last 10m --predicate 'process == "OpenNotch"'`.
 
 Do not delete `applied.json` while a render is on screen. It is the only record of the original.

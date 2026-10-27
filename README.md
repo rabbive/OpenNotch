@@ -18,7 +18,7 @@ OpenNotch supports:
 - The built-in display, and external displays when you turn off **MacBook Screen Only** (on by default).
 - Still images (JPEG, PNG, HEIC, and other single-image files) with Fill, Fit, Stretch, or Center placement.
 - Dynamic (time-of-day and light/dark) HEIC wallpapers. Every frame gets the band, and the schedule is kept.
-- Optional rounded top corners (small, medium, high).
+- Optional rounded screen corners (small, medium, high): the top corners take the band color, and the bottom corners are black like the bezel.
 - A band color for light mode and one for dark mode: Black (the default), Graphite, Silver, or White. The band follows the system appearance. In a light-and-dark HEIC wallpaper, each frame gets the color for its appearance.
 - Launch at login.
 - **Hide Menu Bar Icon**. OpenNotch keeps running. Open the app again to show the icon; it also comes back on every launch.

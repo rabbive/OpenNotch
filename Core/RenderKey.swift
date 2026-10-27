@@ -33,7 +33,7 @@ public struct RenderKey: Hashable, Codable, Sendable {
     }
 
     /// Bump when the renderer's output changes for the same inputs.
-    static let rendererVersion = 1
+    static let rendererVersion = 2
 
     public var digest: String {
         let encoder = JSONEncoder()
