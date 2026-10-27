@@ -63,10 +63,41 @@ public enum WallpaperRenderer {
         return path
     }
 
-    public static func load(_ url: URL) throws -> CGImage {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, CGImageSourceGetPrimaryImageIndex(source), nil)
+    public static func load(_ url: URL, for geometry: BarGeometry, placement: Placement) throws -> CGImage {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil)
         else { throw RenderError(description: "Can't read \(url.lastPathComponent)") }
+        return try load(source, at: CGImageSourceGetPrimaryImageIndex(source), for: geometry, placement: placement)
+    }
+
+    /// Decodes no more pixels than the frame covers once placed on a `geometry`-sized screen, so a 6K
+    /// photo costs about what the screen does and `render` draws it at about 1:1. Center shows the
+    /// source pixel for pixel, and a frame smaller than the screen has nothing to spare, so those decode in full.
+    public static func load(_ source: CGImageSource, at index: Int, for geometry: BarGeometry, placement: Placement) throws -> CGImage {
+        let full = { () throws -> CGImage in
+            guard let image = CGImageSourceCreateImageAtIndex(source, index, nil)
+            else { throw RenderError(description: "Can't read frame \(index)") }
+            return image
+        }
+        guard placement != .center,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0
+        else { return try full() }
+        let size = CGSize(width: width, height: height)
+        let placed = placement.rect(for: size, in: CGSize(width: geometry.pixelWidth, height: geometry.pixelHeight))
+        let scale = max(placed.width / size.width, placed.height / size.height)
+        // Rounding error alone must not ask for one pixel more than the screen shows.
+        let longestSide = Int((max(size.width, size.height) * scale - 0.001).rounded(.up))
+        guard longestSide < max(width, height) else { return try full() }
+        // Without the transform option the thumbnail keeps the orientation a full decode has, so both place alike.
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: longestSide,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, index, options as CFDictionary)
+        else { throw RenderError(description: "Can't read frame \(index)") }
         return image
     }
 

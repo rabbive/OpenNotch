@@ -67,7 +67,7 @@ enum DynamicFixture {
     }
 }
 
-/// Progress arrives on the rendering threads.
+/// Progress arrives on the rendering thread.
 final class ProgressLog: @unchecked Sendable {
     private let lock = NSLock()
     private var reports: [RenderProgress] = []
@@ -146,11 +146,12 @@ struct DynamicHEICTests {
         #expect(DynamicFixture.appleDesktopTags(of: rendered, at: 0) == DynamicFixture.tags)
     }
 
-    @Test func progressCountsEachFrameOnce() throws {
+    /// In order, because frames are painted one after another rather than all at once.
+    @Test func progressCountsEachFrameOnceInOrder() throws {
         let log = ProgressLog()
         _ = try renderFixture { log.append($0) }
         let count = DynamicFixture.colors.count
-        #expect(log.all.map(\.framesDone).sorted() == Array(1...count))
+        #expect(log.all.map(\.framesDone) == Array(1...count))
         #expect(log.all.allSatisfy { $0.frameCount == count })
     }
 

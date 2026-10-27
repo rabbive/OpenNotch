@@ -1,4 +1,5 @@
 import CoreGraphics
+import ImageIO
 import OpenNotchCore
 import Testing
 
@@ -81,6 +82,47 @@ struct WallpaperRendererTests {
         for x in [1, 158] {
             let pixel = pixels[x, 50]
             #expect(pixel[0] == 0 && abs(Int(pixel[1]) - 128) <= 1 && abs(Int(pixel[2]) - 128) <= 1, "letterbox at x \(x) is \(pixel)")
+        }
+    }
+
+    /// A 1600 × 1200 photo with the quadrants' layout.
+    func photo() throws -> CGImageSource {
+        try TestImages.source(TestImages.quadrants(width: 1600, height: 1200))
+    }
+
+    @Test(arguments: [Placement.fill, .fit, .stretch])
+    func aLargePhotoDecodesAtTheSizeItIsShown(placement: Placement) throws {
+        let image = try WallpaperRenderer.load(photo(), at: 0, for: geometry, placement: placement)
+        let shown = placement.rect(for: CGSize(width: 1600, height: 1200), in: CGSize(width: 160, height: 100))
+        let scale = Double(max(shown.width / 1600, shown.height / 1200))
+        #expect(abs(Double(image.width) - 1600 * scale) <= 1, "decoded \(image.width)x\(image.height)")
+        #expect(abs(Double(image.height) - 1200 * scale) <= 1, "decoded \(image.width)x\(image.height)")
+    }
+
+    @Test func centeredAndSmallPhotosDecodeInFull() throws {
+        let centered = try WallpaperRenderer.load(photo(), at: 0, for: geometry, placement: .center)
+        #expect(centered.width == 1600 && centered.height == 1200)
+        let small = try WallpaperRenderer.load(TestImages.source(TestImages.quadrants()), at: 0, for: geometry, placement: .fill)
+        #expect(small.width == 40 && small.height == 30)
+    }
+
+    @Test(arguments: [Placement.fill, .fit, .stretch])
+    func aLargePhotoLandsWhereAFullDecodeDoes(placement: Placement) throws {
+        let source = try photo()
+        func draw(_ image: CGImage) throws -> TestImages.Pixels {
+            TestImages.Pixels(try WallpaperRenderer.render(image, geometry: geometry, placement: placement, background: teal, corners: .medium, band: .black))
+        }
+        let screenSized = try draw(WallpaperRenderer.load(source, at: 0, for: geometry, placement: placement))
+        let full = try draw(try #require(CGImageSourceCreateImageAtIndex(source, 0, nil)))
+        // Where quadrants or the photo's edges meet, the two resample a little differently.
+        let shown = placement.rect(for: CGSize(width: 1600, height: 1200), in: CGSize(width: 160, height: 100))
+        let seamColumns = [shown.minX, shown.midX, shown.maxX].map { Double($0) }
+        let seamRows = [shown.minY, shown.midY, shown.maxY].map { 100 - Double($0) }
+        for y in 0..<100 where seamRows.allSatisfy({ abs(Double(y) - $0) > 2 }) {
+            for x in 0..<160 where seamColumns.allSatisfy({ abs(Double(x) - $0) > 2 }) {
+                let (a, b) = (screenSized[x, y], full[x, y])
+                #expect(zip(a, b).allSatisfy { abs(Int($0) - Int($1)) <= 8 }, "pixel \(x),\(y) is \(a), full decode \(b)")
+            }
         }
     }
 }

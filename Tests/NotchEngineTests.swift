@@ -139,7 +139,7 @@ struct NotchEngineTests {
         let shown = try #require(desktop[""]?.url)
         #expect(store.isRender(shown))
         #expect(desktop[""]?.options == options)
-        let pixels = TestImages.Pixels(try WallpaperRenderer.load(shown))
+        let pixels = TestImages.Pixels(try TestImages.read(shown))
         #expect(pixels.width == 64 && pixels.height == 40)
         #expect(pixels[0, 0] == [0, 0, 0] && pixels[63, 5] == [0, 0, 0])
         #expect(pixels[10, 6] != [0, 0, 0])
@@ -281,14 +281,14 @@ struct NotchEngineTests {
         await engine.sync(enabled: true, builtinOnly: false, corners: .off)
         #expect(engine.statuses == statuses(.applied, Displays.builtin, Displays.external))
 
-        let builtin = TestImages.Pixels(try WallpaperRenderer.load(try #require(desktop[""]?.url)))
+        let builtin = TestImages.Pixels(try TestImages.read(try #require(desktop[""]?.url)))
         #expect(builtin.width == 64 && builtin.height == 40)
         #expect(builtin[0, 5] == [0, 0, 0] && builtin[10, 6] != [0, 0, 0])
 
         let shown = try #require(desktop["", on: "EXTERNAL"]?.url)
         #expect(store.isRender(shown))
         #expect(desktop["", on: "EXTERNAL"]?.options == options)
-        let external = TestImages.Pixels(try WallpaperRenderer.load(shown))
+        let external = TestImages.Pixels(try TestImages.read(shown))
         #expect(external.width == 48 && external.height == 30)
         #expect(external[0, 2] == [0, 0, 0] && external[10, 3] != [0, 0, 0])
 
@@ -494,7 +494,7 @@ struct NotchEngineTests {
     }
 
     func bandPixel(_ space: String = "") throws -> [UInt8] {
-        TestImages.Pixels(try WallpaperRenderer.load(try #require(desktop[space]?.url)))[0, 0]
+        TestImages.Pixels(try TestImages.read(try #require(desktop[space]?.url)))[0, 0]
     }
 
     @Test func theBandFollowsTheAppearance() async throws {

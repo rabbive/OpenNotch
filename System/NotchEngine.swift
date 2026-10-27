@@ -181,11 +181,12 @@ public final class NotchEngine {
     }
 
     /// Draws off the main actor, since a dynamic wallpaper can take seconds, and keeps `painting` current.
+    /// Utility priority, so a paint yields to whatever the user is doing instead of competing with it.
     private func paint(_ source: URL, to rendered: URL, isDynamic: Bool, key: RenderKey) async throws {
         painting = RenderProgress()
         defer { painting = nil }
         let (updates, continuation) = AsyncStream.makeStream(of: RenderProgress.self)
-        let work = Task.detached(priority: .userInitiated) {
+        let work = Task.detached(priority: .utility) {
             defer { continuation.finish() }
             if isDynamic {
                 try DynamicHEIC.render(
@@ -199,7 +200,7 @@ public final class NotchEngine {
                 ) { continuation.yield($0) }
             } else {
                 let image = try WallpaperRenderer.render(
-                    WallpaperRenderer.load(source),
+                    WallpaperRenderer.load(source, for: key.geometry, placement: key.placement),
                     geometry: key.geometry,
                     placement: key.placement,
                     background: key.background,
