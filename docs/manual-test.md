@@ -106,7 +106,7 @@ Leave it on if you plan to do optional step O5. The last step turns it off.
 
 If the verdict names your original photo or a system path instead, stop and send the report. Turning OpenNotch off restores a Space only when macOS reports the render as its wallpaper, through `desktopImageURL` or the wallpaper store. Lines `1.` and `2.` above the verdict show which source reported what.
 
-Rendering time depends on the source and Mac. A plain 5422 × 3615 JPEG took 5 to 7 seconds on an M1 Pro, so wait for the status line to clear.
+Rendering time depends on the source and Mac. On an M1 Pro, the render steps for a 5422 × 3615 JPEG on a 4112 × 2658 screen measured about 0.65 seconds: decode 0.1 s, draw under 0.03 s, PNG encode 0.5 s. Wait for the status line to clear.
 
 **Not confirmed by the code:** macOS picks the menu bar text color. Note whether the text turns white over the black band.
 
