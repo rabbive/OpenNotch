@@ -88,7 +88,7 @@ public final class NotchEngine {
             do {
                 status = try await reconcile(display: display, spaces: spaces, enabled: on, settings: settings)
             } catch {
-                status = .failed(String(describing: error))
+                status = .failed(error.localizedDescription)
             }
             if on || status != .off { statuses.append(DisplayStatus(name: display.name, isBuiltin: display.isBuiltin, status: status)) }
             if !on { spacesToVisit += labelsOfSpacesToVisit(display: display, spaces: spaces) }
@@ -100,6 +100,11 @@ public final class NotchEngine {
     }
 
     private func reconcile(display: DisplaySnapshot, spaces: DisplaySpaces?, enabled: Bool, settings: Settings) async throws -> NotchStatus {
+        let indexPlist = system.indexPlist()
+        // Before anything is forgotten, and whatever is on screen, even a full-screen app or a wallpaper the user
+        // picked: a render an older OpenNotch left is traced only through the records, and the code below can
+        // forget the last record that traces it.
+        if !enabled { recordDesktopsShowingRenders(display: display, spaces: spaces, indexPlist: indexPlist) }
         if let spaces {
             let live = Set(spaces.all.map(\.uuid))
             try store.forget(store.applied.keys.filter { $0.display == display.uuid && $0.space.map { !live.contains($0) } ?? false })
@@ -108,12 +113,11 @@ public final class NotchEngine {
 
         let key = SpaceKey(display: display.uuid, space: spaces?.current.uuid)
         let current = system.wallpaper(display: display.uuid)
-        let indexPlist = system.indexPlist()
         // NSWorkspace can report no file or a placeholder, and then the wallpaper store names what is
         // on screen, which may be a render. A render must never be taken for the original.
         let shown = WallpaperSource.resolve(current: current.url, display: display.uuid, space: key.space, indexPlist: indexPlist).url
         let showingRender = shown.map(store.isRender) ?? false
-        let origin = showingRender ? shown.flatMap { self.origin(ofRender: $0, display: display, band: settings.band) } : nil
+        let origin = showingRender ? shown.flatMap { self.origin(ofRender: $0, display: display) } : nil
         guard !showingRender || origin != nil else {
             return .failed("This desktop shows a wallpaper OpenNotch painted, but not which wallpaper it painted over. Choose your wallpaper again in System Settings.")
         }
@@ -121,7 +125,6 @@ public final class NotchEngine {
         if !enabled {
             if let origin, let shown {
                 let options = current.url.map { Self.sameFile($0, shown) } == true ? current.options : origin.originalOptions
-                try recordOtherDesktopsShowingRenders(display: display, spaces: spaces, indexPlist: indexPlist, band: settings.band)
                 try system.setWallpaper(origin.originalURL, options: options, display: display.uuid)
             }
             try store.forget([key])
@@ -138,13 +141,17 @@ public final class NotchEngine {
 
         let source: URL
         let isDynamic: Bool
-        switch WallpaperSource.resolve(current: original.url, display: display.uuid, space: key.space, indexPlist: indexPlist) {
+        // While a render shows, the wallpaper store names the render, so only the saved original will do.
+        switch WallpaperSource.resolve(current: original.url, display: display.uuid, space: key.space, indexPlist: origin == nil ? indexPlist : nil) {
         case .image(let url):
             (source, isDynamic) = (url, false)
         case .dynamic(let url):
             (source, isDynamic) = (url, true)
         case .unsupported:
-            if !showingRender { try store.forget([key]) }
+            guard origin == nil else {
+                return .failed("The wallpaper OpenNotch painted over can't be opened. Choose your wallpaper again in System Settings.")
+            }
+            try store.forget([key])
             return .unsupportedWallpaper
         }
 
@@ -231,14 +238,14 @@ public final class NotchEngine {
     }
 
     /// What a render was drawn from. A render from before OpenNotch kept that on the file has none, but
-    /// its name is a hash of everything that drew it, so a saved original proves itself by hashing to it.
-    private func origin(ofRender render: URL, display: DisplaySnapshot, band: BandColors) -> RenderOrigin? {
+    /// its name is a hash of everything that drew it, so a saved original proves itself by hashing to it
+    /// under some corner style and band colors the menu offers.
+    private func origin(ofRender render: URL, display: DisplaySnapshot) -> RenderOrigin? {
         if let origin = store.origin(ofRender: render) { return origin }
-        let bands = Set([band, BandColors(band.light), BandColors(band.dark), .black])
         return Set(store.applied.values.map(\.origin)).first { origin in
-            guard let stamp = try? Self.stamp(origin.originalURL) else { return false }
+            guard !store.isRender(origin.originalURL), let stamp = try? Self.stamp(origin.originalURL) else { return false }
             return CornerStyle.allCases.contains { corners in
-                bands.contains { candidate in
+                BandColors.palette.contains { candidate in
                     RenderKey(
                         sourcePath: origin.originalURL.path,
                         sourceStamp: stamp,
@@ -253,18 +260,20 @@ public final class NotchEngine {
         }
     }
 
-    /// macOS copies a wallpaper OpenNotch sets onto other Spaces, so turning off also records every other
-    /// desktop showing one of its renders, to restore on the next visit.
-    private func recordOtherDesktopsShowingRenders(display: DisplaySnapshot, spaces: DisplaySpaces?, indexPlist: Data?, band: BandColors) throws {
+    /// macOS copies a wallpaper OpenNotch sets onto other Spaces, so while off, every other desktop showing
+    /// one of its renders gets a record, to restore on the next visit. A Space that can't be recorded, such
+    /// as one naming a render that is gone, is skipped and never stops the restore.
+    private func recordDesktopsShowingRenders(display: DisplaySnapshot, spaces: DisplaySpaces?, indexPlist: Data?) {
         guard let spaces, let indexPlist else { return }
         for space in spaces.all where space.isDesktop && space.uuid != spaces.current.uuid {
             let key = SpaceKey(display: display.uuid, space: space.uuid)
             guard store.applied[key] == nil,
                   let shown = IndexPlist.imageURL(in: indexPlist, display: display.uuid, space: space.uuid),
                   store.isRender(shown),
-                  let origin = self.origin(ofRender: shown, display: display, band: band)
+                  FileManager.default.fileExists(atPath: shown.path),
+                  let origin = self.origin(ofRender: shown, display: display)
             else { continue }
-            try store.record(AppliedWallpaper(key: key, originalURL: origin.originalURL, originalOptions: origin.originalOptions, renderedURL: shown))
+            try? store.record(AppliedWallpaper(key: key, originalURL: origin.originalURL, originalOptions: origin.originalOptions, renderedURL: shown))
         }
     }
 

@@ -337,14 +337,20 @@ To stop OpenNotch from coming back, uncheck **Launch at Login** and choose **Qui
 
 - Settings are in the `io.github.rabbive.OpenNotch` defaults domain. The keys are `enabled`, `builtinOnly`, and `corners`. Read them with `defaults read io.github.rabbive.OpenNotch`.
 - Saved originals are in `~/Library/Application Support/OpenNotch/applied.json`. Each record has a `key` (the `display` UUID and the `space` UUID), the `originalURL`, the `originalOptions`, and the `renderedURL`. The `space` is `""` for the first desktop. JSON escapes the slashes in the URLs as `\/`.
-- Renders are in `~/Library/Application Support/OpenNotch/Renders`, named `v2-<hash>.tiff` or `v2-<hash>.heic`. Each keeps its original wallpaper and placement options in the `io.github.rabbive.OpenNotch.origin` extended attribute. At launch and after each sync, OpenNotch deletes renders that no saved record or live desktop Space references. Renders from older builds have no such attribute. Their name is a hash of what drew them, so OpenNotch matches it against the originals in `applied.json`.
+- Renders are in `~/Library/Application Support/OpenNotch/Renders`, named `v2-<hash>.tiff` or `v2-<hash>.heic`. Each keeps its original wallpaper and placement options in the `io.github.rabbive.OpenNotch.origin` extended attribute. At launch and after each sync, OpenNotch deletes renders that no saved record references and `Index.plist` names nowhere, including `SystemDefault` and the Spaces of disconnected displays. The folder is excluded from Time Machine. Renders from older builds have no such attribute. Their name is a hash of what drew them, so OpenNotch matches it against the originals in `applied.json`, under every corner style and band color the menu offers. Renders from before the light and dark band colors can't be matched.
 - Logs: `log show --last 10m --predicate 'process == "OpenNotch"'`.
 
 Do not delete `applied.json` while a render is on screen. It lists the Spaces to restore.
 
 ### Restore one Space by hand
 
-1. Find the Space's record in `applied.json`, and read its `originalURL`.
+1. Find the Space's record in `applied.json`, and read its `originalURL`. A desktop macOS copied a render onto may have no record. Then read the original from the render file's extended attribute:
+
+    ```sh
+    xattr -p io.github.rabbive.OpenNotch.origin ~/Library/Application\ Support/OpenNotch/Renders/<render>
+    ```
+
+    It prints JSON with the same `originalURL` and `originalOptions`.
 2. In **System Settings > Wallpaper**, add that file as a photo, and select it.
 3. Set the placement from `originalOptions.scaling`:
     - `1` is **Stretch to Fill Screen**.

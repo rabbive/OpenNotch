@@ -63,10 +63,29 @@ public struct BandColors: Hashable, Codable, Sendable {
 
     public static let black = BandColors(.black)
 
+    /// Every pair the menu can set. A still's render uses one color twice, which is among them.
+    public static let palette: [BandColors] = BandColor.allCases.flatMap { light in
+        BandColor.allCases.map { dark in BandColors(light: light.rgba, dark: dark.rgba) }
+    }
+
     public subscript(appearance: Appearance) -> RGBA {
         switch appearance {
         case .light: light
         case .dark: dark
+        }
+    }
+}
+
+/// The band colors the menu offers.
+public enum BandColor: String, CaseIterable, Sendable {
+    case black, graphite, silver, white
+
+    public var rgba: RGBA {
+        switch self {
+        case .black: .black
+        case .graphite: RGBA(red: 0.2, green: 0.2, blue: 0.21)
+        case .silver: RGBA(red: 0.82, green: 0.82, blue: 0.84)
+        case .white: RGBA(red: 1, green: 1, blue: 1)
         }
     }
 }

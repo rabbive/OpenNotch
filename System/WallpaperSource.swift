@@ -66,24 +66,18 @@ public enum IndexPlist {
         return imageURL(of: desktop)
     }
 
-    /// Every image file the store shows on a live desktop Space, falling back to display-wide entries.
-    public static func imageURLs(in data: Data, desktopSpacesByDisplay: [String: [String]]) -> [URL] {
-        desktopSpacesByDisplay.flatMap { entry in
-            entry.value.compactMap { imageURL(in: data, display: entry.key, space: $0) }
-        }
-    }
-
-    /// Every image file named anywhere in the store, including stale and full-screen Space entries.
-    public static func imageURLs(in data: Data) -> [URL] {
+    /// Every image file named anywhere in the store: SystemDefault, which macOS gives new desktops, every
+    /// display and every Space, connected or not. Nil when the data is no property list.
+    public static func imageURLs(in data: Data) -> [URL]? {
         guard let root = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
-        else { return [] }
-        func children(_ value: Any?) -> [Any] { (value as? [String: Any]).map { Array($0.values) } ?? [] }
-        let spaces = children(root["Spaces"]).compactMap { $0 as? [String: Any] }
-        let entries = [root["AllSpacesAndDisplays"] as Any]
-            + children(root["Displays"])
-            + spaces.map { $0["Default"] as Any }
-            + spaces.flatMap { children($0["Displays"]) }
-        return entries.compactMap { (($0 as? [String: Any])?["Desktop"] as? [String: Any]).flatMap(imageURL(of:)) }
+        else { return nil }
+        func named(_ value: Any) -> [URL] {
+            if let list = value as? [Any] { return list.flatMap(named) }
+            guard let entry = value as? [String: Any] else { return [] }
+            let own = (entry["Desktop"] as? [String: Any]).flatMap(imageURL(of:))
+            return (own.map { [$0] } ?? []) + entry.values.flatMap(named)
+        }
+        return named(root)
     }
 
     private static func imageURL(of desktop: [String: Any]) -> URL? {

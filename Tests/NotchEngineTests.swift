@@ -72,12 +72,6 @@ final class FakeDesktop: DesktopSystem {
         }
         return WallpaperSourceTests.plist(["Spaces": spaces])
     }
-
-    func desktopSpaceIDs() -> [String: [String]] {
-        Dictionary(connected.compactMap { display in
-            spaces(display: display.uuid).map { (display.uuid, $0.all.filter(\.isDesktop).map(\.uuid)) }
-        }, uniquingKeysWith: { first, _ in first })
-    }
 }
 
 /// A sync started from an observation callback, kept so the test can wait for it.
@@ -108,10 +102,18 @@ struct NotchEngineTests {
 
     func makeEngine() throws -> (NotchEngine, Store) {
         let desktop = self.desktop
-        let store = try Store(directory: folder.appending(path: "State")) {
-            IndexPlist.imageURLs(in: desktop.indexPlist() ?? Data(), desktopSpacesByDisplay: desktop.desktopSpaceIDs())
-        }
+        let store = try Store(directory: folder.appending(path: "State")) { desktop.indexPlist() }
         return (NotchEngine(system: desktop, store: store), store)
+    }
+
+    /// A copy of `render` as version 1 left it: an older renderer's name, and no origin on the file.
+    func legacyCopy(of render: URL?, in store: Store) throws -> URL {
+        let render = try #require(render)
+        let legacy = store.rendersDirectory.appending(path: "v1-\(render.lastPathComponent.dropFirst(3))")
+        try FileManager.default.copyItem(at: render, to: legacy)
+        _ = removexattr(legacy.path, "io.github.rabbive.OpenNotch.origin", 0)
+        try #require(RenderOrigin.read(from: legacy) == nil)
+        return legacy
     }
 
     func renders() throws -> [String] {
@@ -358,8 +360,27 @@ struct NotchEngineTests {
         try FileManager.default.createDirectory(at: renders, withIntermediateDirectories: true)
         let render = renders.appending(path: "v1-untracked.png")
         try Data("render".utf8).write(to: render)
-        _ = try Store(directory: directory, shownWallpapers: { nil })
-        #expect(FileManager.default.fileExists(atPath: render.path))
+        for unreadable in [nil, Data("not a plist".utf8)] {
+            _ = try Store(directory: directory, wallpaperStore: { unreadable })
+            #expect(FileManager.default.fileExists(atPath: render.path))
+        }
+    }
+
+    @Test func sweepKeepsEveryRenderTheWallpaperStoreNames() throws {
+        let directory = folder.appending(path: "NamedStore")
+        let renders = directory.appending(path: "Renders")
+        try FileManager.default.createDirectory(at: renders, withIntermediateDirectories: true)
+        let forNewDesktops = renders.appending(path: "v2-000000000000000000000001.tiff")
+        let onAnUnpluggedDisplay = renders.appending(path: "v2-000000000000000000000002.tiff")
+        let stray = renders.appending(path: "v2-000000000000000000000003.tiff")
+        for render in [forNewDesktops, onAnUnpluggedDisplay, stray] { try Data("render".utf8).write(to: render) }
+        let index = WallpaperSourceTests.plist([
+            "SystemDefault": WallpaperSourceTests.desktop(forNewDesktops),
+            "Spaces": ["S9": ["Displays": ["UNPLUGGED": WallpaperSourceTests.desktop(onAnUnpluggedDisplay)]]],
+        ])
+        let store = try Store(directory: directory, wallpaperStore: { index })
+        #expect(try Set(FileManager.default.contentsOfDirectory(atPath: renders.path)) == [forNewDesktops.lastPathComponent, onAnUnpluggedDisplay.lastPathComponent])
+        #expect(store.applied.isEmpty)
     }
 
     @Test func aRenderLeftByAFailedSetIsDeleted() async throws {
@@ -417,6 +438,8 @@ struct NotchEngineTests {
         await engine.sync(enabled: true, corners: .off)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: state)
         #expect(engine.statuses.count == 1 && engine.statuses[0].status != .applied)
+        // The menu shows why as a sentence, not an error's debug dump.
+        if case .failed(let reason) = engine.statuses.first?.status { #expect(!reason.contains("Domain="), "\(reason)") }
         #expect(desktop[""]?.url == photo)
         #expect(desktop.setCount == 0)
 
@@ -466,6 +489,10 @@ struct NotchEngineTests {
         #expect(desktop[newSpace]?.url == photo)
         #expect(engine.spacesToVisit.isEmpty)
         #expect(store.applied.isEmpty)
+        // The full-screen Space's entry still names the render, so it stays until that entry moves on.
+        #expect(try renders() == [shown.lastPathComponent])
+        desktop["FULLSCREEN"] = nil
+        await engine.sync(enabled: false, corners: .off)
         #expect(try renders().isEmpty)
     }
 
@@ -490,7 +517,6 @@ struct NotchEngineTests {
         #expect(desktop[newSpace]?.url == photo)
         #expect(engine.spacesToVisit.isEmpty)
         #expect(store.applied.isEmpty)
-        #expect(try renders().isEmpty)
     }
 
     @Test func aSettingChangedOnOneDesktopReachesADesktopShowingACopiedRender() async throws {
@@ -529,11 +555,7 @@ struct NotchEngineTests {
         let (engine, store) = try makeEngine()
         await engine.sync(enabled: true, corners: .off)
         // Version 1 kept no origin on the file, and a turn-off could forget the only record naming it.
-        let current = try #require(desktop[""]?.url)
-        let legacy = store.rendersDirectory.appending(path: "v1-\(current.lastPathComponent.dropFirst(3))")
-        try FileManager.default.copyItem(at: current, to: legacy)
-        _ = removexattr(legacy.path, "io.github.rabbive.OpenNotch.origin", 0)
-        try #require(RenderOrigin.read(from: legacy) == nil)
+        let legacy = try legacyCopy(of: desktop[""]?.url, in: store)
         desktop["S2"] = (legacy, options)
 
         desktop.currentSpace = "S2"
@@ -544,6 +566,82 @@ struct NotchEngineTests {
         await engine.sync(enabled: false, corners: .high)
         #expect(desktop["S2"]?.url == photo)
         #expect(desktop["S2"]?.options == options)
+    }
+
+    @Test func anOlderRenderIsTracedWhateverBandColorAndCornersDrewIt() async throws {
+        let (engine, store) = try makeEngine()
+        await engine.sync(enabled: true, corners: .medium, band: BandColors(BandColor.graphite.rgba))
+        desktop["S2"] = (try legacyCopy(of: desktop[""]?.url, in: store), options)
+
+        desktop.currentSpace = "S2"
+        await engine.sync(enabled: true, corners: .high)
+        #expect(engine.statuses == statuses(.applied, Displays.builtin))
+        #expect(store.applied[SpaceKey(display: Displays.builtin.uuid, space: "S2")]?.originalURL == photo)
+    }
+
+    @Test func turningOffFromAFullScreenAppStillRestoresAnOlderRenderOnAnotherDesktop() async throws {
+        let (engine, store) = try makeEngine()
+        await engine.sync(enabled: true, corners: .off)
+        desktop["S2"] = (try legacyCopy(of: desktop[""]?.url, in: store), options)
+        desktop.fullScreen.insert("FULLSCREEN")
+        desktop.spaceIDs.append("FULLSCREEN")
+
+        await visit("FULLSCREEN", engine, enabled: false)
+        #expect(engine.spacesToVisit == ["Desktop 1", "Desktop 2"])
+        // Restoring Desktop 1 forgets the one record that traces Desktop 2's render.
+        await visit("", engine, enabled: false)
+        await visit("S2", engine, enabled: false)
+        #expect(desktop["S2"]?.url == photo)
+        #expect(desktop["S2"]?.options == options)
+        #expect(engine.spacesToVisit.isEmpty)
+    }
+
+    @Test func turningOffOnADesktopWithAWallpaperPickedSinceStillRestoresAnOlderRender() async throws {
+        let (engine, store) = try makeEngine()
+        await engine.sync(enabled: true, corners: .off)
+        desktop["S2"] = (try legacyCopy(of: desktop[""]?.url, in: store), options)
+        desktop[""] = (otherPhoto, options)
+
+        await engine.sync(enabled: false, corners: .off)
+        #expect(desktop[""]?.url == otherPhoto)
+        #expect(engine.spacesToVisit == ["Desktop 2"])
+        await visit("S2", engine, enabled: false)
+        #expect(desktop["S2"]?.url == photo)
+        #expect(engine.spacesToVisit.isEmpty)
+    }
+
+    @Test func aDesktopNamingADeletedRenderNeverStopsTurningOff() async throws {
+        let (engine, store) = try makeEngine()
+        await engine.sync(enabled: true, corners: .off)
+        let deleted = try legacyCopy(of: desktop[""]?.url, in: store)
+        try FileManager.default.removeItem(at: deleted)
+        desktop["S2"] = (deleted, options)
+
+        await engine.sync(enabled: false, corners: .off)
+        #expect(engine.statuses.isEmpty)
+        #expect(desktop[""]?.url == photo)
+        #expect(desktop[""]?.options == options)
+    }
+
+    @Test func aRenderIsNeverSavedAsTheOriginalWhenTheRealOneIsGone() async throws {
+        let gone = folder.appending(path: "gone.png")
+        try FileManager.default.copyItem(at: photo, to: gone)
+        desktop[""] = (gone, options)
+        let (engine, store) = try makeEngine()
+        await engine.sync(enabled: true, corners: .off)
+        let render = try #require(desktop[""]?.url)
+        try FileManager.default.removeItem(at: gone)
+
+        await engine.sync(enabled: true, corners: .high)
+        guard case .failed = try #require(engine.statuses.first).status else {
+            Issue.record("expected a failure, got \(engine.statuses)")
+            return
+        }
+        #expect(desktop[""]?.url == render)
+        #expect(store.applied.values.allSatisfy { !store.isRender($0.originalURL) })
+        #expect(throws: RenderError.self) {
+            try store.record(AppliedWallpaper(key: SpaceKey(display: "BUILTIN", space: "S2"), originalURL: render, originalOptions: options, renderedURL: render))
+        }
     }
 
     @Test func aRenderWithNoKnownOriginalIsLeftAlone() async throws {

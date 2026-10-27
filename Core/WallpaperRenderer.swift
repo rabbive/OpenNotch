@@ -3,8 +3,9 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-public struct RenderError: Error, CustomStringConvertible {
+public struct RenderError: LocalizedError, CustomStringConvertible {
     public let description: String
+    public var errorDescription: String? { description }
 
     public init(description: String) {
         self.description = description
