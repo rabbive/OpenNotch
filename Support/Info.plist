@@ -6,6 +6,10 @@
 	<string>en</string>
 	<key>CFBundleExecutable</key>
 	<string>OpenNotch</string>
+	<key>CFBundleIconFile</key>
+	<string>OpenNotch</string>
+	<key>CFBundleIconName</key>
+	<string>OpenNotch</string>
 	<key>CFBundleIdentifier</key>
 	<string>io.github.rabbive.OpenNotch</string>
 	<key>CFBundleInfoDictionaryVersion</key>

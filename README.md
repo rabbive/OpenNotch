@@ -40,6 +40,8 @@ open build/OpenNotch.app
 
 OpenNotch runs from the menu bar and has no Dock icon. Choose **Black Menu Bar** to turn it on.
 
+The app icon's source is `Support/OpenNotch.icon`, an Icon Composer document. With Xcode 26 or later, `Scripts/build-app.sh` compiles it with `actool` into the Liquid Glass icon (`Assets.car`) and a flat `OpenNotch.icns` for older macOS. Xcode 16 cannot read `.icon` files, so the script copies `Support/OpenNotch.icns` instead. After you edit the icon, run the script with Xcode 26 or later and copy `build/OpenNotch.app/Contents/Resources/OpenNotch.icns` to `Support/OpenNotch.icns`.
+
 ### Try a CI build without building
 
 Every CI run on macOS 27 uploads the app as an artifact named `OpenNotch-<commit>`. Download it from the run's **Summary** page, unzip it, and move `OpenNotch.app` to Applications. The build is ad-hoc signed, not notarized, so macOS blocks the first launch. Clear the download flag once:
