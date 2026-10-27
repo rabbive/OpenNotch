@@ -579,6 +579,30 @@ struct NotchEngineTests {
         #expect(store.applied[SpaceKey(display: Displays.builtin.uuid, space: "S2")]?.originalURL == photo)
     }
 
+    @Test func offScansEveryDisplayBeforeForgettingLegacyRenderOrigins() async throws {
+        let sameGeometry = DisplaySnapshot(
+            uuid: Displays.external.uuid,
+            name: Displays.external.name,
+            isBuiltin: false,
+            geometry: Displays.builtin.geometry
+        )
+        desktop.connected = [Displays.builtin, sameGeometry]
+        let (engine, store) = try makeEngine()
+        await engine.sync(enabled: true, builtinOnly: false, corners: .off)
+        let externalRender = try #require(desktop["", on: Displays.external.uuid]?.url)
+        let legacy = try legacyCopy(of: externalRender, in: store)
+        desktop["", on: Displays.external.uuid] = (legacy, options)
+        // Model an unvisited copied render with no per-Space record, whose only origin is this other display.
+        try store.forget([SpaceKey(display: Displays.external.uuid, space: "")])
+        desktop[""] = (otherPhoto, options)
+
+        await engine.sync(enabled: false, builtinOnly: false, corners: .off)
+        #expect(desktop[""]?.url == otherPhoto)
+        #expect(desktop["", on: Displays.external.uuid]?.url == photo)
+        #expect(desktop["", on: Displays.external.uuid]?.options == options)
+        #expect(engine.statuses.isEmpty)
+    }
+
     @Test func turningOffFromAFullScreenAppStillRestoresAnOlderRenderOnAnotherDesktop() async throws {
         let (engine, store) = try makeEngine()
         await engine.sync(enabled: true, corners: .off)

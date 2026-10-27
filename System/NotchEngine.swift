@@ -55,6 +55,12 @@ public final class NotchEngine {
         let band: BandColors
     }
 
+    private struct DesktopRender {
+        let key: SpaceKey
+        let url: URL
+        let origin: RenderOrigin
+    }
+
     public init(system: DesktopSystem, store: Store) {
         self.system = system
         self.store = store
@@ -78,38 +84,61 @@ public final class NotchEngine {
     }
 
     private func pass(_ settings: Settings) async {
-        let displays = system.displays()
+        let targets = system.displays().map { display in
+            (display: display, spaces: system.spaces(display: display.uuid), enabled: settings.enabled && (display.isBuiltin || !settings.builtinOnly))
+        }
+        // Resolve every off desktop while all records are still available. A legacy render on one display may
+        // only be traceable through a record for another display that would otherwise be forgotten first.
+        let indexPlist = system.indexPlist()
+        var offRenders: [SpaceKey: DesktopRender] = [:]
+        if let indexPlist {
+            for target in targets where !target.enabled {
+                offRenders.merge(desktopsShowingRenders(display: target.display, spaces: target.spaces, indexPlist: indexPlist)) { _, new in new }
+            }
+        }
+
         var statuses: [DisplayStatus] = []
         var spacesToVisit: [String] = []
-        for display in displays {
-            let on = settings.enabled && (display.isBuiltin || !settings.builtinOnly)
-            let spaces = system.spaces(display: display.uuid)
+        for target in targets {
             let status: NotchStatus
             do {
-                status = try await reconcile(display: display, spaces: spaces, enabled: on, settings: settings)
+                status = try await reconcile(display: target.display, spaces: target.spaces, enabled: target.enabled, settings: settings, indexPlist: indexPlist, offRenders: offRenders)
             } catch {
                 status = .failed(error.localizedDescription)
             }
-            if on || status != .off { statuses.append(DisplayStatus(name: display.name, isBuiltin: display.isBuiltin, status: status)) }
-            if !on { spacesToVisit += labelsOfSpacesToVisit(display: display, spaces: spaces) }
+            if target.enabled || status != .off { statuses.append(DisplayStatus(name: target.display.name, isBuiltin: target.display.isBuiltin, status: status)) }
+            if !target.enabled { spacesToVisit += labelsOfSpacesToVisit(display: target.display, spaces: target.spaces) }
         }
+        let displays = targets.map(\.display)
         if !settings.enabled { spacesToVisit += labelsOfDisconnectedDisplays(connected: displays) }
         store.sweep()
         self.statuses = statuses
         self.spacesToVisit = spacesToVisit
     }
 
-    private func reconcile(display: DisplaySnapshot, spaces: DisplaySpaces?, enabled: Bool, settings: Settings) async throws -> NotchStatus {
-        let indexPlist = system.indexPlist()
-        // Before anything is forgotten, and whatever is on screen, even a full-screen app or a wallpaper the user
-        // picked: a render an older OpenNotch left is traced only through the records, and the code below can
-        // forget the last record that traces it.
-        if !enabled { recordDesktopsShowingRenders(display: display, spaces: spaces, indexPlist: indexPlist) }
+    private func reconcile(
+        display: DisplaySnapshot,
+        spaces: DisplaySpaces?,
+        enabled: Bool,
+        settings: Settings,
+        indexPlist: Data?,
+        offRenders: [SpaceKey: DesktopRender]
+    ) async throws -> NotchStatus {
+        let staleKeys: [SpaceKey]
         if let spaces {
             let live = Set(spaces.all.map(\.uuid))
-            try store.forget(store.applied.keys.filter { $0.display == display.uuid && $0.space.map { !live.contains($0) } ?? false })
+            staleKeys = store.applied.keys.filter { $0.display == display.uuid && $0.space.map { !live.contains($0) } ?? false }
+        } else {
+            staleKeys = []
         }
-        if spaces?.current.isDesktop == false { return enabled ? .fullScreenSpace : .off }
+        if enabled { try store.forget(staleKeys) }
+        if spaces?.current.isDesktop == false {
+            if !enabled {
+                recordOffDesktops(offRenders, display: display.uuid, excluding: nil)
+                try store.forget(staleKeys)
+            }
+            return enabled ? .fullScreenSpace : .off
+        }
 
         let key = SpaceKey(display: display.uuid, space: spaces?.current.uuid)
         let current = system.wallpaper(display: display.uuid)
@@ -117,7 +146,10 @@ public final class NotchEngine {
         // on screen, which may be a render. A render must never be taken for the original.
         let shown = WallpaperSource.resolve(current: current.url, display: display.uuid, space: key.space, indexPlist: indexPlist).url
         let showingRender = shown.map(store.isRender) ?? false
-        let origin = showingRender ? shown.flatMap { self.origin(ofRender: $0, display: display) } : nil
+        let scannedOrigin = shown.flatMap { shown in
+            offRenders[key].flatMap { Self.sameFile($0.url, shown) ? $0.origin : nil }
+        }
+        let origin = showingRender ? scannedOrigin ?? shown.flatMap { self.origin(ofRender: $0, display: display) } : nil
         guard !showingRender || origin != nil else {
             return .failed("This desktop shows a wallpaper OpenNotch painted, but not which wallpaper it painted over. Choose your wallpaper again in System Settings.")
         }
@@ -127,7 +159,8 @@ public final class NotchEngine {
                 let options = current.url.map { Self.sameFile($0, shown) } == true ? current.options : origin.originalOptions
                 try system.setWallpaper(origin.originalURL, options: options, display: display.uuid)
             }
-            try store.forget([key])
+            recordOffDesktops(offRenders, display: display.uuid, excluding: key)
+            try store.forget([key] + staleKeys)
             return .off
         }
 
@@ -178,7 +211,7 @@ public final class NotchEngine {
             let now = system.wallpaper(display: display.uuid)
             let spacesNow = system.spaces(display: display.uuid)
             if spacesNow?.current.uuid != key.space || now.url != current.url || now.options != current.options {
-                return try await reconcile(display: display, spaces: spacesNow, enabled: enabled, settings: settings)
+                return try await reconcile(display: display, spaces: spacesNow, enabled: enabled, settings: settings, indexPlist: indexPlist, offRenders: offRenders)
             }
         }
         // Recorded first: a crash after the set would otherwise leave a render on screen that no
@@ -260,20 +293,29 @@ public final class NotchEngine {
         }
     }
 
-    /// macOS copies a wallpaper OpenNotch sets onto other Spaces, so while off, every other desktop showing
-    /// one of its renders gets a record, to restore on the next visit. A Space that can't be recorded, such
-    /// as one naming a render that is gone, is skipped and never stops the restore.
-    private func recordDesktopsShowingRenders(display: DisplaySnapshot, spaces: DisplaySpaces?, indexPlist: Data?) {
-        guard let spaces, let indexPlist else { return }
-        for space in spaces.all where space.isDesktop && space.uuid != spaces.current.uuid {
+    /// Captures origins for every off desktop before any display forgets records, including the current desktop.
+    /// Missing render files are ignored; their absence must not prevent another Space from being restored.
+    private func desktopsShowingRenders(display: DisplaySnapshot, spaces: DisplaySpaces?, indexPlist: Data) -> [SpaceKey: DesktopRender] {
+        guard let spaces else { return [:] }
+        var result: [SpaceKey: DesktopRender] = [:]
+        for space in spaces.all where space.isDesktop {
             let key = SpaceKey(display: display.uuid, space: space.uuid)
-            guard store.applied[key] == nil,
-                  let shown = IndexPlist.imageURL(in: indexPlist, display: display.uuid, space: space.uuid),
+            let currentURL = space.uuid == spaces.current.uuid ? system.wallpaper(display: display.uuid).url : nil
+            guard let shown = currentURL ?? IndexPlist.imageURL(in: indexPlist, display: display.uuid, space: space.uuid),
                   store.isRender(shown),
                   FileManager.default.fileExists(atPath: shown.path),
                   let origin = self.origin(ofRender: shown, display: display)
             else { continue }
-            try? store.record(AppliedWallpaper(key: key, originalURL: origin.originalURL, originalOptions: origin.originalOptions, renderedURL: shown))
+            result[key] = DesktopRender(key: key, url: shown, origin: origin)
+        }
+        return result
+    }
+
+    /// Call only after the current Space has been handled. One unrecordable copied render must not block Off.
+    private func recordOffDesktops(_ renders: [SpaceKey: DesktopRender], display: String, excluding current: SpaceKey?) {
+        for render in renders.values where render.key.display == display && store.applied[render.key] == nil {
+            guard current.map({ $0 == render.key }) != true else { continue }
+            try? store.record(AppliedWallpaper(key: render.key, originalURL: render.origin.originalURL, originalOptions: render.origin.originalOptions, renderedURL: render.url))
         }
     }
 
