@@ -72,6 +72,12 @@ final class FakeDesktop: DesktopSystem {
         }
         return WallpaperSourceTests.plist(["Spaces": spaces])
     }
+
+    func desktopSpaceIDs() -> [String: [String]] {
+        Dictionary(connected.compactMap { display in
+            spaces(display: display.uuid).map { (display.uuid, $0.all.filter(\.isDesktop).map(\.uuid)) }
+        }, uniquingKeysWith: { first, _ in first })
+    }
 }
 
 /// A sync started from an observation callback, kept so the test can wait for it.
@@ -102,7 +108,9 @@ struct NotchEngineTests {
 
     func makeEngine() throws -> (NotchEngine, Store) {
         let desktop = self.desktop
-        let store = try Store(directory: folder.appending(path: "State")) { IndexPlist.imageURLs(in: desktop.indexPlist() ?? Data()) }
+        let store = try Store(directory: folder.appending(path: "State")) {
+            IndexPlist.imageURLs(in: desktop.indexPlist() ?? Data(), desktopSpacesByDisplay: desktop.desktopSpaceIDs())
+        }
         return (NotchEngine(system: desktop, store: store), store)
     }
 
@@ -344,6 +352,16 @@ struct NotchEngineTests {
         #expect(desktop.setCount == 1)
     }
 
+    @Test func sweepKeepsRendersWhenWallpaperStoreCannotBeRead() throws {
+        let directory = folder.appending(path: "UnreadableStore")
+        let renders = directory.appending(path: "Renders")
+        try FileManager.default.createDirectory(at: renders, withIntermediateDirectories: true)
+        let render = renders.appending(path: "v1-untracked.png")
+        try Data("render".utf8).write(to: render)
+        _ = try Store(directory: directory, shownWallpapers: { nil })
+        #expect(FileManager.default.fileExists(atPath: render.path))
+    }
+
     @Test func aRenderLeftByAFailedSetIsDeleted() async throws {
         let (engine, _) = try makeEngine()
         desktop.failsToSet = true
@@ -423,15 +441,56 @@ struct NotchEngineTests {
         #expect(desktop[""]?.options == fit)
     }
 
-    @Test func aRenderAnotherSpaceStillShowsIsKept() async throws {
-        let (engine, _) = try makeEngine()
+    @Test func aRenderCopiedToANewDesktopIsAdoptedAndRestored() async throws {
+        let (engine, store) = try makeEngine()
         await engine.sync(enabled: true, corners: .off)
         let shown = try #require(desktop[""]?.url)
-        // As with Show on All Spaces: macOS put the render on a Space OpenNotch has no record for.
-        desktop["S2"] = (shown, options)
+        let newSpace = "B31CA0AE"
+        desktop.spaceIDs = ["", newSpace]
+        desktop[newSpace] = (shown, options)
+
+        await visit(newSpace, engine, enabled: true)
+        #expect(engine.statuses == statuses(.applied, Displays.builtin))
+        #expect(desktop.setCount == 1)
+        #expect(store.applied[SpaceKey(display: Displays.builtin.uuid, space: newSpace)]?.originalURL == photo)
+
+        desktop.fullScreen.insert("FULLSCREEN")
+        desktop.spaceIDs.append("FULLSCREEN")
+        desktop["FULLSCREEN"] = (shown, options)
+        await visit("", engine, enabled: false)
+        #expect(desktop[""]?.url == photo)
+        #expect(engine.spacesToVisit == ["Desktop 2"])
+        #expect(try renders() == [shown.lastPathComponent])
+
+        await visit(newSpace, engine, enabled: false)
+        #expect(desktop[newSpace]?.url == photo)
+        #expect(engine.spacesToVisit.isEmpty)
+        #expect(store.applied.isEmpty)
+        #expect(try renders().isEmpty)
+    }
+
+    @Test func anUnvisitedDesktopRenderKeepsItsOriginalWhenTurningOff() async throws {
+        let (engine, store) = try makeEngine()
+        await engine.sync(enabled: true, corners: .off)
+        let shown = try #require(desktop[""]?.url)
+        let newSpace = "B31CA0AE"
+        desktop.spaceIDs = ["", newSpace]
+        desktop[newSpace] = (shown, options)
+        desktop.fullScreen.insert("FULLSCREEN")
+        desktop.spaceIDs.append("FULLSCREEN")
+        desktop["FULLSCREEN"] = (shown, options)
+
         await engine.sync(enabled: false, corners: .off)
         #expect(desktop[""]?.url == photo)
+        #expect(store.applied[SpaceKey(display: Displays.builtin.uuid, space: newSpace)]?.originalURL == photo)
+        #expect(engine.spacesToVisit == ["Desktop 2"])
         #expect(try renders() == [shown.lastPathComponent])
+
+        await visit(newSpace, engine, enabled: false)
+        #expect(desktop[newSpace]?.url == photo)
+        #expect(engine.spacesToVisit.isEmpty)
+        #expect(store.applied.isEmpty)
+        #expect(try renders().isEmpty)
     }
 
     func bandPixel(_ space: String = "") throws -> [UInt8] {

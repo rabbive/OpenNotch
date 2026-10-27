@@ -28,15 +28,13 @@ public struct AppliedWallpaper: Codable, Equatable, Sendable {
 
 /// Every replaced wallpaper, saved as JSON after each change so a revert still works after a relaunch,
 /// plus the renders themselves. After each sweep the render folder holds only files a record points
-/// to or a Space shows, so its size is bounded by the Spaces OpenNotch changed, and a returning Space
-/// finds its render still there.
+/// to or a live desktop Space shows, so a returning Space finds its render still there.
 @MainActor
 public final class Store {
     public let directory: URL
     public private(set) var applied: [SpaceKey: AppliedWallpaper] = [:]
-    /// Wallpapers on screen anywhere, as the wallpaper store lists them. A render among them is kept
-    /// even without a record, so a Space showing it never loses its picture.
-    private let shownWallpapers: @MainActor () -> [URL]
+    /// Wallpapers shown on live desktop Spaces. A render among them is kept without a record, too.
+    private let shownWallpapers: @MainActor () -> [URL]?
 
     public static var defaultDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appending(path: "OpenNotch")
@@ -46,7 +44,7 @@ public final class Store {
     private var fileURL: URL { directory.appending(path: "applied.json") }
 
     /// Throws on a corrupt file rather than starting empty, which would lose every revert.
-    public init(directory: URL, shownWallpapers: @escaping @MainActor () -> [URL] = { [] }) throws {
+    public init(directory: URL, shownWallpapers: @escaping @MainActor () -> [URL]? = { nil }) throws {
         self.directory = directory
         self.shownWallpapers = shownWallpapers
         try FileManager.default.createDirectory(at: rendersDirectory, withIntermediateDirectories: true)
@@ -59,6 +57,11 @@ public final class Store {
 
     public func isRender(_ url: URL) -> Bool {
         url.deletingLastPathComponent().resolvingSymlinksInPath().path == rendersDirectory.resolvingSymlinksInPath().path
+    }
+
+    public func record(forRender url: URL) -> AppliedWallpaper? {
+        let path = url.standardizedFileURL.resolvingSymlinksInPath().path
+        return applied.values.first { $0.renderedURL.standardizedFileURL.resolvingSymlinksInPath().path == path }
     }
 
     public func record(_ wallpaper: AppliedWallpaper) throws {
@@ -84,11 +87,13 @@ public final class Store {
         applied = updated
     }
 
-    /// Deletes every render no record names and no Space shows: renders replaced by newer ones,
-    /// left by a crash or a failed set, half-written, or from an older renderer version. Run it once
+    /// Deletes every render no record names and no live desktop Space shows: renders replaced by newer ones,
+    /// left by a crash or a failed set, half-written, or from an older renderer version. If the wallpaper
+    /// store cannot be read, leaves every render untouched. Run it once
     /// the wallpapers are set, since a render about to be replaced still counts as shown until then.
     public func sweep() {
-        let referenced = Set(applied.values.map(\.renderedURL.lastPathComponent) + shownWallpapers().filter { isRender($0) }.map(\.lastPathComponent))
+        guard let shown = shownWallpapers() else { return }
+        let referenced = Set(applied.values.map(\.renderedURL.lastPathComponent) + shown.filter { isRender($0) }.map(\.lastPathComponent))
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: rendersDirectory.path) else { return }
         for name in names where !referenced.contains(name) {
             try? FileManager.default.removeItem(at: rendersDirectory.appending(path: name))

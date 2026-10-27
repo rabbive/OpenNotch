@@ -66,7 +66,14 @@ public enum IndexPlist {
         return imageURL(of: desktop)
     }
 
-    /// Every image file the store shows, on any display or Space.
+    /// Every image file the store shows on a live desktop Space, falling back to display-wide entries.
+    public static func imageURLs(in data: Data, desktopSpacesByDisplay: [String: [String]]) -> [URL] {
+        desktopSpacesByDisplay.flatMap { entry in
+            entry.value.compactMap { imageURL(in: data, display: entry.key, space: $0) }
+        }
+    }
+
+    /// Every image file named anywhere in the store, including stale and full-screen Space entries.
     public static func imageURLs(in data: Data) -> [URL] {
         guard let root = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
         else { return [] }

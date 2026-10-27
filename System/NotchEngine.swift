@@ -100,26 +100,38 @@ public final class NotchEngine {
 
         let key = SpaceKey(display: display.uuid, space: spaces?.current.uuid)
         let current = system.wallpaper(display: display.uuid)
-        let applied = store.applied[key]
         let indexPlist = system.indexPlist()
         // NSWorkspace can report no file or a placeholder, and then the wallpaper store names what is
         // on screen, which may be a render. A render must never be taken for the original.
         let shown = WallpaperSource.resolve(current: current.url, display: display.uuid, space: key.space, indexPlist: indexPlist).url
         let showingRender = shown.map(store.isRender) ?? false
+        let renderRecord = shown.flatMap { store.record(forRender: $0) }
+        guard !showingRender || renderRecord != nil else {
+            return .failed("A render is showing but its original wallpaper wasn't saved")
+        }
 
-        guard enabled else {
-            if let applied, showingRender {
-                try system.setWallpaper(applied.originalURL, options: applied.originalOptions, display: display.uuid)
+        if !enabled {
+            if let renderRecord, let shown {
+                let options = current.url.map { Self.sameFile($0, shown) } == true ? current.options : renderRecord.originalOptions
+                try recordOtherSpacesShowing(
+                    renderRecord.renderedURL,
+                    originalURL: renderRecord.originalURL,
+                    options: options,
+                    display: display.uuid,
+                    currentSpace: key.space,
+                    spaces: spaces,
+                    indexPlist: indexPlist
+                )
+                try system.setWallpaper(renderRecord.originalURL, options: options, display: display.uuid)
             }
             try store.forget([key])
             return .off
         }
 
         let original: (url: URL?, options: DesktopOptions)
-        if showingRender {
-            guard let applied else { return .failed("A render is showing but its original wallpaper wasn't saved") }
+        if let renderRecord, let shown {
             // Renders are set with the original options, so other options reported with one are the user's new choice.
-            original = (applied.originalURL, current.url == shown ? current.options : applied.originalOptions)
+            original = (renderRecord.originalURL, current.url.map { Self.sameFile($0, shown) } == true ? current.options : renderRecord.originalOptions)
         } else {
             original = current
         }
@@ -199,6 +211,33 @@ public final class NotchEngine {
         }
         for await update in updates { painting = update }
         try await work.value
+    }
+
+    private func recordOtherSpacesShowing(
+        _ renderedURL: URL,
+        originalURL: URL,
+        options: DesktopOptions,
+        display: String,
+        currentSpace: String?,
+        spaces: DisplaySpaces?,
+        indexPlist: Data?
+    ) throws {
+        guard let spaces, let indexPlist else { return }
+        for space in spaces.all where space.isDesktop && space.uuid != currentSpace {
+            guard let shown = IndexPlist.imageURL(in: indexPlist, display: display, space: space.uuid),
+                  Self.sameFile(shown, renderedURL)
+            else { continue }
+            try store.record(AppliedWallpaper(
+                key: SpaceKey(display: display, space: space.uuid),
+                originalURL: originalURL,
+                originalOptions: options,
+                renderedURL: renderedURL
+            ))
+        }
+    }
+
+    private static func sameFile(_ first: URL, _ second: URL) -> Bool {
+        first.standardizedFileURL.resolvingSymlinksInPath().path == second.standardizedFileURL.resolvingSymlinksInPath().path
     }
 
     /// Built-in Spaces keep their v0.1 labels; the others name their display.

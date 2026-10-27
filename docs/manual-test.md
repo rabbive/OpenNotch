@@ -94,7 +94,7 @@ Leave it on if you plan to do optional step O5. The last step turns it off.
 
 1. On Desktop 1, choose **Black Menu Bar**.
 
-- [ ] The status line shows `Painting wallpaper…` for about a second, then `<built-in display name>: On`. The name is the one macOS gives the display, such as `Built-in Retina Display`.
+- [ ] The status line shows `Painting wallpaper…`, then `<built-in display name>: On`. The name is the one macOS gives the display, such as `Built-in Retina Display`.
 - [ ] The wallpaper is black from the top edge down to the bottom of the menu bar, across the full width. The notch blends into the black.
 - [ ] No black shows below the menu bar, and no strip of wallpaper shows inside it.
 - [ ] Below the band, the wallpaper keeps the same crop and position as before.
@@ -106,13 +106,15 @@ Leave it on if you plan to do optional step O5. The last step turns it off.
 
 If the verdict names your original photo or a system path instead, stop and send the report. Turning OpenNotch off restores a Space only when macOS reports the render as its wallpaper, through `desktopImageURL` or the wallpaper store. Lines `1.` and `2.` above the verdict show which source reported what.
 
+Rendering time depends on the source and Mac. A plain 5422 × 3615 JPEG took 5 to 7 seconds on an M1 Pro, so wait for the status line to clear.
+
 **Not confirmed by the code:** macOS picks the menu bar text color. Note whether the text turns white over the black band.
 
 ### 7. Try each rounded-corner style (1 minute)
 
 1. Choose **Rounded Corners > Small**, then **Medium**, then **High**, then **Off**.
 
-- [ ] After each choice, the status line returns to `On` within about a second.
+- [ ] After each choice, the status line returns to `On` when the render finishes.
 - [ ] For Small, Medium, and High, the two top corners of the wallpaper, just below the band, become rounded with black outside the curve. The radius is 6, 10, and 16 points. The bottom corners never change.
 - [ ] For Off, the band's bottom edge is straight from side to side again.
 - [ ] After each choice, `ls "$support/Renders"` still lists one file. OpenNotch deletes the old render once the new one is set.
@@ -141,7 +143,7 @@ If the verdict names your original photo or a system path instead, stop and send
 
 - [ ] Its original wallpaper comes back within about half a second.
 - [ ] The `Visit to restore` line is gone.
-- [ ] `cat "$support/applied.json"` prints `[]`, and `ls "$support/Renders"` lists nothing. OpenNotch keeps a render that the wallpaper store still names for some Space or display. If a file remains, note its name. The probe's store summary in the next step shows where it is still named.
+- [ ] `cat "$support/applied.json"` prints `[]`, and `ls "$support/Renders"` lists nothing. OpenNotch keeps a render while a saved record or a live desktop Space needs it. Stale full-screen entries do not keep a render file. If a file remains, note its name. The probe's store summary in the next step shows where it is still named.
 - [ ] **System Settings > Wallpaper** shows the same photo and placement option as before, such as **Fill Screen**, with the same background color.
 
 3. Run `Scripts/mac-probe.sh` again. Then compare its store summary with the first report's:
@@ -245,12 +247,12 @@ This step changes your wallpaper settings. The backup from step 1 records them.
 3. Switch to Desktop 2.
 
 - [ ] Note whether Desktop 2 already shows the band when you arrive.
-- [ ] Note the status line on Desktop 2. If macOS gave the render to every Space, the code shows `Couldn't apply: A render is showing but its original wallpaper wasn't saved`. If macOS changed only Desktop 1, Desktop 2 gets its own band within half a second and shows `On`.
+- [ ] Note the status line on Desktop 2. If macOS gave it the render, OpenNotch adopts the saved original and shows `On`. Otherwise, Desktop 2 gets its own band and shows `On` after the render finishes.
 - [ ] Note whether **Show on all Spaces** is still on.
 
 4. Return to Desktop 1, uncheck **Black Menu Bar**, and visit Desktop 2.
 
-- [ ] Note the `Visit to restore` line and the wallpaper on both Spaces. The code restores only Spaces with a saved record. Desktop 2 has none if step 3 showed the error. OpenNotch keeps the render file while the wallpaper store still names it, so Desktop 2 never loses its picture.
+- [ ] Note the `Visit to restore` line and the wallpaper on both Spaces. OpenNotch saves recovery data for live desktop Spaces that show a copied render, then restores each Space when you visit it. Stale full-screen entries in the wallpaper store do not keep render files after every desktop is restored.
 
 ### O3. Center placement with a small photo (2 minutes)
 
@@ -294,16 +296,27 @@ This step changes your wallpaper settings. The backup from step 1 records them.
 1. With OpenNotch on, choose **Bar Color in Light Mode > White** and **Bar Color in Dark Mode > Black**.
 2. In **System Settings > Appearance**, choose **Light**.
 
-- [ ] Within about a second, the status line shows `Painting wallpaper…`, then `On`, and the band turns white across the full width.
+- [ ] The status line shows `Painting wallpaper…`, then `On`, and the band turns white across the full width.
 
 3. Choose **Dark**.
 
-- [ ] Within about a second, the band turns black again.
+- [ ] The band turns black again after the render finishes.
 - [ ] After each switch, `ls "$support/Renders"` lists one file.
 
 4. Choose your usual appearance, and set both bar colors back to **Black**.
 
 **Not confirmed by the code:** OpenNotch re-renders when macOS posts its appearance-change notification and reads the appearance from the app. If the band keeps its old color after a switch, switch to Desktop 2 and back to force a sync, and note whether the color then follows. Also note the menu bar text color over the white band.
+
+### O7. Create a desktop while OpenNotch is on (2 minutes)
+
+1. Turn on **Black Menu Bar** on Desktop 1. Use Mission Control to create Desktop 2 while OpenNotch is on.
+2. Visit Desktop 2 while OpenNotch is still on.
+
+- [ ] The menu shows `<built-in display name>: On`. If macOS copied the render, the wallpaper keeps its band without an error.
+
+3. Return to Desktop 1, turn OpenNotch off, then visit Desktop 2.
+
+- [ ] Desktop 1 and Desktop 2 show their original wallpaper after you visit each one. The `Visit to restore` line clears, and `ls "$support/Renders"` lists no files.
 
 ## If something goes wrong
 
@@ -319,7 +332,7 @@ To stop OpenNotch from coming back, uncheck **Launch at Login** and choose **Qui
 
 - Settings are in the `io.github.rabbive.OpenNotch` defaults domain. The keys are `enabled`, `builtinOnly`, and `corners`. Read them with `defaults read io.github.rabbive.OpenNotch`.
 - Saved originals are in `~/Library/Application Support/OpenNotch/applied.json`. Each record has a `key` (the `display` UUID and the `space` UUID), the `originalURL`, the `originalOptions`, and the `renderedURL`. The `space` is `""` for the first desktop. JSON escapes the slashes in the URLs as `\/`.
-- Renders are in `~/Library/Application Support/OpenNotch/Renders`, named `v1-<hash>.png` or `v1-<hash>.heic`. At launch and after each change, OpenNotch deletes any render that no record names.
+- Renders are in `~/Library/Application Support/OpenNotch/Renders`, named `v1-<hash>.png` or `v1-<hash>.heic`. At launch and after each sync, OpenNotch deletes renders that no saved record or live desktop Space references.
 - Logs: `log show --last 10m --predicate 'process == "OpenNotch"'`.
 
 Do not delete `applied.json` while a render is on screen. It is the only record of the original.

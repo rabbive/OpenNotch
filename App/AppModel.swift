@@ -43,7 +43,15 @@ final class AppModel {
         darkBand = defaults.string(forKey: Key.darkBand).flatMap(BandColor.init(rawValue:)) ?? .black
         do {
             let desktop = LiveDesktop()
-            let store = try Store(directory: Store.defaultDirectory) { desktop.indexPlist().map { IndexPlist.imageURLs(in: $0) } ?? [] }
+            let store = try Store(directory: Store.defaultDirectory) {
+                guard let index = desktop.indexPlist() else { return nil }
+                let displays = desktop.displays()
+                let spaces = Dictionary(displays.compactMap { display in
+                    desktop.spaces(display: display.uuid).map { (display.uuid, $0.all.filter(\.isDesktop).map(\.uuid)) }
+                }, uniquingKeysWith: { first, _ in first })
+                guard !displays.isEmpty, spaces.count == displays.count else { return IndexPlist.imageURLs(in: index) }
+                return IndexPlist.imageURLs(in: index, desktopSpacesByDisplay: spaces)
+            }
             engine = NotchEngine(system: desktop, store: store)
         } catch {
             engine = nil
