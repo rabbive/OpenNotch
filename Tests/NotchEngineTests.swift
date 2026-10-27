@@ -647,6 +647,24 @@ struct NotchEngineTests {
         #expect(desktop[""]?.options == options)
     }
 
+    @Test func aDeletedCopiedRenderIsRestoredOnLaterVisitAfterTurningOff() async throws {
+        let (engine, store) = try makeEngine()
+        await engine.sync(enabled: true, corners: .off)
+        let deleted = try legacyCopy(of: desktop[""]?.url, in: store)
+        desktop["S2"] = (deleted, options)
+        try FileManager.default.removeItem(at: deleted)
+
+        await engine.sync(enabled: false, corners: .off)
+        #expect(desktop[""]?.url == photo)
+        #expect(engine.spacesToVisit == ["Desktop 2"])
+        #expect(store.applied[SpaceKey(display: Displays.builtin.uuid, space: "S2")]?.originalURL == photo)
+
+        await visit("S2", engine, enabled: false)
+        #expect(desktop["S2"]?.url == photo)
+        #expect(desktop["S2"]?.options == options)
+        #expect(engine.spacesToVisit.isEmpty)
+    }
+
     @Test func aRenderIsNeverSavedAsTheOriginalWhenTheRealOneIsGone() async throws {
         let gone = folder.appending(path: "gone.png")
         try FileManager.default.copyItem(at: photo, to: gone)

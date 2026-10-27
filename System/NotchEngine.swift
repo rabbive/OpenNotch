@@ -87,6 +87,10 @@ public final class NotchEngine {
         let targets = system.displays().map { display in
             (display: display, spaces: system.spaces(display: display.uuid), enabled: settings.enabled && (display.isBuiltin || !settings.builtinOnly))
         }
+        // A cached placed image is useful only while OpenNotch is enabled on that connected display.
+        // Drop disconnected or newly excluded displays now rather than retaining full-resolution images.
+        let reusableDisplays = Set(targets.filter(\.enabled).map { $0.display.uuid })
+        placed = placed.filter { reusableDisplays.contains($0.key) }
         // Resolve every off desktop while all records are still available. A legacy render on one display may
         // only be traceable through a record for another display that would otherwise be forgotten first.
         let indexPlist = system.indexPlist()
@@ -144,7 +148,15 @@ public final class NotchEngine {
         let current = system.wallpaper(display: display.uuid)
         // NSWorkspace can report no file or a placeholder, and then the wallpaper store names what is
         // on screen, which may be a render. A render must never be taken for the original.
-        let shown = WallpaperSource.resolve(current: current.url, display: display.uuid, space: key.space, indexPlist: indexPlist).url
+        let resolved = WallpaperSource.resolve(current: current.url, display: display.uuid, space: key.space, indexPlist: indexPlist).url
+        // If macOS still names a deleted render for this Space, keep that path visible to the Off path.
+        // A persisted record can still tell us what to restore even though ImageIO cannot decode the file.
+        let indexed = indexPlist.flatMap { IndexPlist.imageURL(in: $0, display: display.uuid, space: key.space) }
+        let named = current.url ?? indexed
+        let missingRender = named.flatMap {
+            store.isRender($0) && !FileManager.default.fileExists(atPath: $0.path) ? $0 : nil
+        }
+        let shown = resolved ?? missingRender
         let showingRender = shown.map(store.isRender) ?? false
         let scannedOrigin = shown.flatMap { shown in
             offRenders[key].flatMap { Self.sameFile($0.url, shown) ? $0.origin : nil }
@@ -303,7 +315,6 @@ public final class NotchEngine {
             let currentURL = space.uuid == spaces.current.uuid ? system.wallpaper(display: display.uuid).url : nil
             guard let shown = currentURL ?? IndexPlist.imageURL(in: indexPlist, display: display.uuid, space: space.uuid),
                   store.isRender(shown),
-                  FileManager.default.fileExists(atPath: shown.path),
                   let origin = self.origin(ofRender: shown, display: display)
             else { continue }
             result[key] = DesktopRender(key: key, url: shown, origin: origin)

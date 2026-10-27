@@ -125,7 +125,11 @@ public final class Store {
         guard !isRender(wallpaper.originalURL) else {
             throw RenderError(description: "OpenNotch won't save one of its own renders as the wallpaper to restore.")
         }
-        if RenderOrigin.read(from: wallpaper.renderedURL) == nil { try wallpaper.origin.write(to: wallpaper.renderedURL) }
+        if FileManager.default.fileExists(atPath: wallpaper.renderedURL.path) {
+            if RenderOrigin.read(from: wallpaper.renderedURL) == nil { try wallpaper.origin.write(to: wallpaper.renderedURL) }
+        } else if !isRender(wallpaper.renderedURL) {
+            throw RenderError(description: "OpenNotch can't record a missing render file.")
+        }
         guard applied[wallpaper.key] != wallpaper else { return }
         var updated = applied
         updated[wallpaper.key] = wallpaper
