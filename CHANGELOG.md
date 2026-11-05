@@ -4,7 +4,7 @@ All notable changes to OpenNotch are recorded here. Each release on GitHub uses 
 
 Versions follow [Semantic Versioning](https://semver.org). A version with a suffix, such as `0.1.0-beta.1`, is a beta and is published as a pre-release.
 
-Add each change under **Unreleased** in the pull request that makes it. To release, rename **Unreleased** to the new version and date, add a new empty **Unreleased** above it, merge, and run the Release workflow (see the README).
+Add each change under **Unreleased** in the pull request that makes it. To release, rename **Unreleased** to the new version and date, add a new empty **Unreleased** above it, and merge. The Release workflow then publishes it (see the README).
 
 ## Unreleased
 

@@ -2,7 +2,15 @@ name: Release
 
 # Publishes a GitHub release of OpenNotch from main, with its CHANGELOG.md section as the notes.
 # A version with a suffix, such as 0.1.0-beta.1, is published as a pre-release.
+#
+# It runs by itself when a push to main changes CHANGELOG.md: if the newest version section under
+# "## Unreleased" has no tag yet, that version is released. It can also be run by hand with a version.
 on:
+  push:
+    branches: [main]
+    paths:
+      - CHANGELOG.md
+      - .github/workflows/release.yml
   workflow_dispatch:
     inputs:
       version:
@@ -18,11 +26,41 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  plan:
+    name: Pick the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: pick
+        name: Pick the version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          version=$(Scripts/release-notes.sh --newest)
+          if [ -z "$version" ]; then
+            echo "No version section in CHANGELOG.md, nothing to release"
+          elif git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "v$version is already released"
+          else
+            echo "Releasing $version"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+          fi
+
   release:
-    name: Release ${{ inputs.version }}
+    name: Release ${{ needs.plan.outputs.version }}
+    needs: plan
+    if: needs.plan.outputs.version != ''
     runs-on: xcode-27
     env:
-      VERSION: ${{ inputs.version }}
+      VERSION: ${{ needs.plan.outputs.version }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Check the version
