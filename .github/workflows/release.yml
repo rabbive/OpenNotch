@@ -1,0 +1,55 @@
+name: Release
+
+# Publishes a GitHub release of OpenNotch from main, with its CHANGELOG.md section as the notes.
+# A version with a suffix, such as 0.1.0-beta.1, is published as a pre-release.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, such as 0.1.0-beta.1. CHANGELOG.md needs a section for it."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release ${{ inputs.version }}
+    runs-on: xcode-27
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check the version
+        run: |
+          [ "$GITHUB_REF" = refs/heads/main ] || { echo "::error::Release from main, not $GITHUB_REF"; exit 1; }
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$' ||
+            { echo "::error::'$VERSION' is not a version like 0.1.0 or 0.1.0-beta.1"; exit 1; }
+      - uses: actions/checkout@v7
+      - name: Check the tag is new
+        run: |
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+             git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::v$VERSION already exists"; exit 1
+          fi
+      - name: Release notes
+        run: Scripts/release-notes.sh "$VERSION" | tee build-notes.md
+      - name: Test
+        run: swift test
+      - name: Bundle the app
+        run: OPENNOTCH_VERSION="$VERSION" OPENNOTCH_BUILD="$GITHUB_RUN_NUMBER" Scripts/build-app.sh
+      - name: Zip the app
+        run: |
+          ditto -c -k --keepParent build/OpenNotch.app "build/OpenNotch-$VERSION.zip"
+          (cd build && shasum -a 256 "OpenNotch-$VERSION.zip" > "OpenNotch-$VERSION.zip.sha256")
+      - name: Publish
+        run: |
+          case $VERSION in *-*) prerelease=--prerelease ;; *) prerelease=--latest ;; esac
+          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "OpenNotch $VERSION" --notes-file build-notes.md $prerelease \
+            "build/OpenNotch-$VERSION.zip" "build/OpenNotch-$VERSION.zip.sha256"

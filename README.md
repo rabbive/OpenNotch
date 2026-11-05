@@ -44,6 +44,18 @@ OpenNotch runs from the menu bar and has no Dock icon. Choose **Black Menu Bar**
 
 The app icon's source is `Support/OpenNotch.icon`, an Icon Composer document. With Xcode 26 or later, `Scripts/build-app.sh` compiles it with `actool` into the Liquid Glass icon (`Assets.car`) and a flat `OpenNotch.icns` for older macOS. Xcode 16 cannot read `.icon` files, so the script copies `Support/OpenNotch.icns` instead. After you edit the icon, run the script with Xcode 26 or later and copy `build/OpenNotch.app/Contents/Resources/OpenNotch.icns` to `Support/OpenNotch.icns`.
 
+### Install a release
+
+Download `OpenNotch-<version>.zip` from the [Releases](https://github.com/rabbive/OpenNotch/releases) page, unzip it, move `OpenNotch.app` to Applications, and clear the download flag as below. Releases are betas for now, published as pre-releases. Each one's notes come from [CHANGELOG.md](CHANGELOG.md).
+
+### Make a release
+
+1. Every pull request adds its user-facing changes under **Unreleased** in `CHANGELOG.md`.
+2. To release, rename **Unreleased** to the new version and date (`## 0.1.0-beta.2 - 2026-11-20`), add an empty **Unreleased** above it, and merge that to main. Betas take a `-beta.N` suffix.
+3. Run the **Release** workflow on main with that version (`gh workflow run release.yml -f version=0.1.0-beta.2`). It checks the changelog section exists, runs the tests, builds the app with the version stamped in, and publishes tag `v<version>` with the zip, its SHA-256, and the changelog section as notes. A version with a suffix is a pre-release.
+
+`Scripts/release-notes.sh <version>` prints the notes a release will get.
+
 ### Try a CI build without building
 
 Every CI run on macOS 27 uploads the app as an artifact named `OpenNotch-<commit>`. Download it from the run's **Summary** page, unzip it, and move `OpenNotch.app` to Applications. The build is ad-hoc signed, not notarized, so macOS blocks the first launch. Clear the download flag once:

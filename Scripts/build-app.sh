@@ -1,5 +1,6 @@
 #!/bin/sh
 # Builds build/OpenNotch.app (arm64, ad-hoc signed) from the Swift package.
+# OPENNOTCH_VERSION (such as 0.1.0-beta.1) and OPENNOTCH_BUILD (a build number) stamp the app's version.
 set -eu
 cd "$(dirname "$0")/.."
 swift build -c release --arch arm64 --product OpenNotch
@@ -8,6 +9,14 @@ app=build/OpenNotch.app
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp Support/Info.plist "$app/Contents/Info.plist"
+if [ -n "${OPENNOTCH_VERSION:-}" ]; then
+    # CFBundleShortVersionString takes only the numeric part; the full version, beta suffix included, goes in OpenNotchVersion.
+    plutil -replace CFBundleShortVersionString -string "${OPENNOTCH_VERSION%%-*}" "$app/Contents/Info.plist"
+    plutil -replace OpenNotchVersion -string "$OPENNOTCH_VERSION" "$app/Contents/Info.plist"
+fi
+if [ -n "${OPENNOTCH_BUILD:-}" ]; then
+    plutil -replace CFBundleVersion -string "$OPENNOTCH_BUILD" "$app/Contents/Info.plist"
+fi
 cp "$binary" "$app/Contents/MacOS/OpenNotch"
 
 # Xcode 26 and later compile the Liquid Glass icon. Older Xcode cannot read .icon files, so it ships the flat copy.
