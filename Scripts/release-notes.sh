@@ -1,8 +1,15 @@
 #!/bin/sh
 # Prints the CHANGELOG.md section for a version, without its heading. Fails if the section is missing or empty.
 # Usage: Scripts/release-notes.sh <version>
+#        Scripts/release-notes.sh --newest   prints the newest version with a section, or nothing
 set -eu
 cd "$(dirname "$0")/.."
+
+if [ "${1:-}" = --newest ]; then
+    awk '/^## / { v = substr($0, 4); sub(/ - .*/, "", v); if (v != "Unreleased") { print v; exit } }' CHANGELOG.md
+    exit 0
+fi
+
 version=${1:?usage: Scripts/release-notes.sh <version>}
 
 notes=$(awk -v v="$version" '

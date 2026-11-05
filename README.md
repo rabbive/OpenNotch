@@ -52,7 +52,7 @@ Download `OpenNotch-<version>.zip` from the [Releases](https://github.com/rabbiv
 
 1. Every pull request adds its user-facing changes under **Unreleased** in `CHANGELOG.md`.
 2. To release, rename **Unreleased** to the new version and date (`## 0.1.0-beta.2 - 2026-11-20`), add an empty **Unreleased** above it, and merge that to main. Betas take a `-beta.N` suffix.
-3. Run the **Release** workflow on main with that version (`gh workflow run release.yml -f version=0.1.0-beta.2`). It checks the changelog section exists, runs the tests, builds the app with the version stamped in, and publishes tag `v<version>` with the zip, its SHA-256, and the changelog section as notes. A version with a suffix is a pre-release.
+3. Merging starts the **Release** workflow: when a push to main changes `CHANGELOG.md` and the newest version section has no tag yet, it releases that version. You can also run it by hand on main (`gh workflow run release.yml -f version=0.1.0-beta.2`). It checks the changelog section exists, runs the tests, builds the app with the version stamped in, and publishes tag `v<version>` with the zip, its SHA-256, and the changelog section as notes. A version with a suffix is a pre-release.
 
 `Scripts/release-notes.sh <version>` prints the notes a release will get.
 
