@@ -24,7 +24,9 @@ public enum DynamicHEIC {
     /// A frame that a light-and-dark wallpaper shows in one appearance gets that appearance's band
     /// color. Every other frame gets `band.light`, so pass one color twice to paint all frames alike.
     /// Frames are painted one at a time on the caller's thread, so however many frames a wallpaper has,
-    /// it keeps one core busy and holds one decoded source frame. `progress` is called as each frame finishes.
+    /// it keeps one core busy and holds one decoded source frame. The encoder keeps every finished frame
+    /// until it finalizes, and those are file-backed, so they don't add a screen of memory each.
+    /// `progress` is called as each frame finishes.
     public static func render(
         _ source: URL,
         to destination: URL,

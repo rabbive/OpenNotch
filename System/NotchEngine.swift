@@ -42,8 +42,8 @@ public final class NotchEngine {
     @ObservationIgnored private var requested: Settings?
     @ObservationIgnored private var running: Task<Void, Never>?
     /// The still each display last had placed at screen size, so changing corners or band color only
-    /// repaints those. It holds a screen of pixels, about 44 MB on a 16-inch MacBook Pro, so it is
-    /// dropped `placedLifetime` after the last paint.
+    /// repaints those. Its pixels are in a mapped temporary file rather than memory (about 30 MB of
+    /// disk on a 16-inch MacBook Pro), and it is dropped `placedLifetime` after the last paint.
     @ObservationIgnored private var placed: [String: PlacedWallpaper] = [:]
     @ObservationIgnored private var forgetPlaced: Task<Void, Never>?
     static let placedLifetime: Duration = .seconds(120)
